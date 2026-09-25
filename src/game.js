@@ -228,12 +228,18 @@
 
     var grEl = document.getElementById("groups");
     var hintEl = document.getElementById("break-hint");
-    var solBtn = document.getElementById("group-sol");
-    var stkBtn = document.getElementById("group-stri");
+    var pickWrap = document.getElementById("group-pick-wrap");
     var againBtn = document.getElementById("play-again");
 
-    if (solBtn) solBtn.style.display = (groupPickerIdx >= 0) ? "inline-block" : "none";
-    if (stkBtn) stkBtn.style.display = (groupPickerIdx >= 0) ? "inline-block" : "none";
+    /* The break-group picker is invisible (display:none, no hit-tests) until the
+       human must choose a group. Hiding the whole wrapper - not just the two
+       buttons - also prevents transparent buttons from still swallowing clicks. */
+    var pickActive = groupPickerIdx >= 0;
+    if (pickWrap) {
+      pickWrap.style.display = pickActive ? "flex" : "none";
+      pickWrap.style.opacity = pickActive ? "1" : "0";
+      pickWrap.style.pointerEvents = pickActive ? "auto" : "none";
+    }
     if (againBtn) againBtn.style.display = state.gameOver ? "inline-block" : "none";
 
     if (turnEl) turnEl.textContent = isHumanTurn() ? "You" : "Bot";

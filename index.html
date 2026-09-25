@@ -42,7 +42,11 @@
   button:hover { transform: translateY(-2px); box-shadow: 0 0 22px rgba(90,215,255,.5), 0 8px 16px rgba(0,0,0,.5); }
   button:active { transform: translateY(0); }
 
-  .group-pick { opacity: 0; transform: translateY(-4px) scale(.97); transition: opacity .15s ease, transform .15s ease; }
+  /* Break-group picker: hidden until updateHUD makes it active. The inherited
+     .controls transform keeps it vertically centered. JS (updateHUD) flips
+     display/opacity/pointer-events so the invisible state also removes the
+     phantom hit-tests that the button{pointer-events:auto} rule would leave. */
+  .group-pick { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
 
   /* "Play again" is only shown on game over (updateHUD sets style.display inline,
      which overrides this rule). Default to hidden so it never flashes before the
@@ -63,7 +67,7 @@
 
   <div id="msg">Break the rack &mdash; drag from the cue.</div>
 
-  <div class="controls group-pick">
+    <div class="controls group-pick" id="group-pick-wrap">
     <button id="group-sol" title="Play solids (1-7)">SOLID</button>
     <button id="group-stri" title="Play stripes (9-15, black is 8)">STRIPE</button>
   </div>
