@@ -101,7 +101,10 @@
 
             var rv = (A.vx - B.vx) * nx + (A.vy - B.vy) * ny;
             if (rv > 0) {
-              var k = rv * (1 + C.BALL_RESTITUTION);
+              /* Equal-mass impulse per ball: (1 + e) * rv / 2. The missing half
+                 was injecting ~4x energy at every contact, so the cue died on
+                 impact while object balls flew off at up to 1.9x speed. */
+              var k = rv * (1 + C.BALL_RESTITUTION) / 2;
               A.vx -= nx * k; A.vy -= ny * k;
               B.vx += nx * k; B.vy += ny * k;
             }

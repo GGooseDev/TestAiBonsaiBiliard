@@ -23,21 +23,28 @@
   if (!globalThis.performance) globalThis.performance = {};
   globalThis.performance.now = Date.now;
 
-  var loadOrder = [
+   /* webgl3d.js is a browser/WebGL module (needs THREE). It is loaded last,
+      after the headless stub below so tick()/start() never crash in Node. */
+   var loadOrder = [
     "src/config.js", "src/vec.js", "src/ball.js", "src/table.js",
     "src/physics.js", "src/rules.js", "src/player.js", "src/bot.js",
-    "src/ui.js", "src/render.js", "src/game.js"
-  ];
+    "src/ui.js"
+   ];
 
-  function loadModule(relPath) {
-    var code = fs.readFileSync(relPath, "utf8");
-    return new Function("window", "globalThis",
-      "globalThis.window = globalThis.window || window;\n" + code)(globalThis, globalThis);
-  }
+   function loadModule(relPath) {
+     var code = fs.readFileSync(relPath, "utf8");
+     return new Function("window", "globalThis",
+       "globalThis.window = globalThis.window || window;\n" + code)(globalThis, globalThis);
+   }
 
-  for (var i = 0; i < loadOrder.length; i++) {
-    try { loadModule(loadOrder[i]); } catch (e) { fail("module load threw: " + e.message); }
-  }
+   for (var i = 0; i < loadOrder.length; i++) {
+     try { loadModule(loadOrder[i]); } catch (e) { fail("module load threw: " + e.message); }
+   }
+   /* Node has no THREE/WebGL, so game.js's P.WebGL3D calls must be no-ops. */
+   if (!globalThis.Poole.WebGL3D) {
+     globalThis.Poole.WebGL3D = { init: function () {}, resize: function () {}, draw: function () {}, pop: function () {}, screenToTableLogical: function () { return null; } };
+   }
+   try { loadModule("src/game.js"); } catch (e) { fail("module load threw: " + e.message); }
 
   function fail(msg) { console.log("[FAIL] " + msg); process.exit(1); }
 
@@ -53,40 +60,9 @@
      timer never fires in this harness, so we fire bot shots by hand in the
      driver loop below. */
 
-  /* Minimal mock canvas/2d-ctx so P.Render.draw() (called by tick()) does not
-     throw; we only care about game state here, not pixel output. */
-  function makeCtx(w, h) {
-    var ops = { n: 0 };
-    function finite(x, k) { if (!isFinite(x)) { /* tolerate NaN in shadows only for logging */ } }
-    return {
-      canvas: { width: w, height: h },
-      getContext: function () { return this; },
-      setTransform: function () { ops.n++; return this; },
-      beginPath: function () { ops.n++; return this; },
-      closePath: function () { ops.n++; return this; },
-      moveTo: function (x, y) { ops.n++; return this; },
-      lineTo: function (x, y) { ops.n++; return this; },
-      quadCurveTo: function () { ops.n++; return this; },
-      bezierCurveTo: function () { ops.n++; return this; },
-      arc: function () { ops.n++; return this; },
-      arcTo: function () { ops.n++; return this; },
-      ellipse: function () { ops.n++; return this; },
-      rect: function () { ops.n++; return this; },
-      strokeRect: function () { ops.n++; return this; },
-      fillRect: function (x, y, w2, h2) { if (!isFinite(x) || !isFinite(y) || !isFinite(w2) || !isFinite(h2)) { throw new Error("non-finite fillRect"); } ops.n++; return this; },
-      fill: function () { ops.n++; return this; },
-      stroke: function () { ops.n++; return this; },
-      clip: function () { ops.n++; return this; },
-      setLineDash: function (arr) { ops.n++; return this; },
-      drawImage: function () { ops.n++; return this; },
-      fillText: function (t, x, y) { if (!isFinite(x) || !isFinite(y)) { throw new Error("non-finite fillText"); } ops.n++; return this; },
-      createLinearGradient: function (x0, y0, x1, y1) { return { addColorStop: function () {} }; },
-      createRadialGradient: function (cx0, cy0, r0, cx1, cy1, r1) { return { addColorStop: function () {} }; }
-    };
-  }
-  var mockCtx = makeCtx(1600, 900);
-  globalThis.Poole._renderCtx = mockCtx;      /* game.js tick() reads P._renderCtx */
-  T.fit({ width: 1600, height: 900 }, 1600, 900);
+   /* No fake 2D ctx is needed anymore: the WebGL renderer is stubbed in Node
+      (P.WebGL3D.draw() is a no-op), so the driver only exercises game state. */
+   T.fit({ width: 1600, height: 900 }, 1600, 900);
 
   /* A shot aimed straight at the rack from the break spot (matches the value
      smoke-e2e uses to make a deterministic break hit). */

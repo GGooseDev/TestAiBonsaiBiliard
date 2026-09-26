@@ -69,9 +69,16 @@
     window.addEventListener("touchend", endAim);
   }
 
+  /* Map a mouse/touch event to table-logical coords. The WebGL renderer owns the
+     camera + felt geometry, so it does the perspective ray-cast (screenToTableLogical).
+     Falls back to the flat 2D frame only if the 3D renderer isn't available yet. */
   function toLogical(e) {
-    var r = P.UI.canvas.getBoundingClientRect();
-    var sx = e.clientX - r.left, sy = e.clientY - r.top;
+    var hit = P.WebGL3D ? P.WebGL3D.screenToTableLogical(e.clientX, e.clientY) : null;
+    if (hit && isFinite(hit.x) && isFinite(hit.y)) return hit;
+
+    /* fallback: flat transform (headless / resize-before-init). */
+    var cr = P.UI.canvas && P.UI.canvas.getBoundingClientRect ? P.UI.canvas.getBoundingClientRect() : null;
+    var sx = e.clientX - (cr ? cr.left : 0), sy = e.clientY - (cr ? cr.top : 0);
     return { x: (sx - P.Table.offX) / P.Table.size, y: (sy - P.Table.offY) / P.Table.size };
   }
 

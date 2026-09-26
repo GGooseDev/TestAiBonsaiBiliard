@@ -42,14 +42,15 @@
   C.COLLIDE_PASSES = 5;
 
   /* shooting */
-  C.MAX_SHOT_SPEED = 620;
-  C.POWER_MAX_DIST = 240;
+   C.MAX_SHOT_SPEED = 1240;   /* 2x the old 620 so a full pull feels like a hard hit */
+   C.POWER_MAX_DIST = 240;
   C.MIN_DRAG = 5;
 
-  /* cue stick visuals */
-  C.CUE_MIN_SHAFT = 36;
-  C.CUE_MAX_EXTEND = 260;
-  C.CUE_SHAFT_W = 7;
+   /* cue stick visuals — the visible stick (tip to butt) rests at CUE_STICK_LEN so it never
+      reads as a stub, and is pulled further from the ball by CUE_MAX_EXTEND as power rises. */
+   C.CUE_STICK_LEN = 240;
+   C.CUE_MAX_EXTEND = 160;
+   C.CUE_SHAFT_W = 7;
 
   /* effects */
   C.SHAKE_MS = 700;
@@ -62,9 +63,9 @@
   C.MSG_RISE = 80;
   C.TARGET_RING_R = C.BR + 3;
   C.POWER_RING_MIN = 4;
-  C.POWER_RING_MAX = 13;
+   C.POWER_RING_MAX = 13;
 
-  /* --- ball colors (16-ball) --- */
+   /* --- ball colors (16-ball) --- */
   var SOLID_HUES = {
     "1": "#f1a62b", "2": "#7e4c7e", "3": "#3e80d9", "4": "#b74a8f",
     "5": "#2aa28e", "6": "#8f3a3a", "7": "#a86a17"

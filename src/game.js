@@ -46,9 +46,7 @@
       shotInFlight: false,
       phase: "break",
       message: "Break the rack - drag from the cue.",
-      floats: [],
-      floatMessages: [],   /* rising text bubbles (see render) */
-      shakeUntil: -9e9,    /* monolith screen-shake deadline in ms */
+      shakeUntil: -9e9,    /* screen-shake deadline (ms), read by WebGL3D draw */
       gameOver: false,
       winner: null
     };
@@ -84,27 +82,12 @@
     state.shotInFlight = true;
   }
 
-  /* Celebratory burst at a ball's last position. */
-  function pushFloat(id) {
-    if (!state) return;
-    var b = ballById(id);
-    if (!b) return;
-    for (var n = 0; n < 5; n++) {
-      var a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 80;
-      state.floats.push({
-        x: b.x, y: b.y,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        life: 1.2, lifeMax: 1.2,
-        color: "rgba(255, 200, 90, " + (0.4 + Math.random() * 0.6) + ")"
-      });
-    }
-  }
-
-  /* Rising text float over the table + screen shake (the monolith look).
-     rgb is an "R,G,B" string; positioned at upper-center of the felt. */
+  /* Rising 3D float sprite over the table + screen shake (the monolith look).
+     rgb is an "R,G,B" string; positioned at upper-center of the felt by the
+     WebGL renderer. */
   function popFloat(text, rgb) {
-    if (!state || !P.Render) return;
-    P.Render.showFloatMsg(text, rgb);
+    if (!state || !P.WebGL3D) return;
+    P.WebGL3D.pop(text, rgb);
     state.shakeUntil = typeof performance !== "undefined"
       ? performance.now() + C.SHAKE_MS
       : Date.now() + C.SHAKE_MS;
@@ -127,10 +110,6 @@
     if (D.respot8) {
       var e = ballById(8);
       if (e) P.Physics.respot(e, C.CENTER.x, C.CENTER.y);
-    }
-
-    for (var i = 0; i < result.pocketedThisShot.length; i++) {
-      pushFloat(result.pocketedThisShot[i].id);
     }
 
     /* Signature floating text + screen shake (monolith feel). */
@@ -308,39 +287,39 @@
   function tick() {
     rafId = requestAnimationFrame(tick);
     if (!state) return;
-    var ctx = P._renderCtx;
 
-    if (state.gameOver) {
-      P.Render.draw(ctx);                       /* static end-screen overlay */
-    } else {
-      if (state.shotInFlight) {
-        var phys = P.Physics;
-        if (phys.anyMoving()) {
-          phys.integrateStep(C.STEP);
-        } else {
-          state.shotInFlight = false;
-          handleShotOutcome();
-        }
+    /* only advance physics while a shot is in flight; never after game over.
+       WebGL3D.draw() runs every frame and handles both the active table and the
+       game-over overlay (it also no-ops in headless/Node, where there's no GL). */
+    if (!state.gameOver && state.shotInFlight) {
+      var phys = P.Physics;
+      if (phys.anyMoving()) {
+        phys.integrateStep(C.STEP);
+      } else {
+        state.shotInFlight = false;
+        handleShotOutcome();
       }
-      P.Render.draw(ctx);
     }
+
+    P.WebGL3D.draw(state);
 
     if (!state.gameOver && !P.UI.shootable) updateHUD();
   }
 
   function start(canvas) {
-    var ctx = canvas.getContext("2d");
-    P._renderCtx = ctx;
-    P.UI.attach(canvas);
-    P.Table.fit(canvas, W.innerWidth, W.innerHeight);
+    /* WebGL3D owns all drawing: it allocates the renderer + scene on the canvas and
+       re-fits the world to the current window size. No 2D context is needed. */
+    P.WebGL3D.init(canvas);
+    P.WebGL3D.resize(W.innerWidth, W.innerHeight);
+    P.UI.attach(canvas);              /* register global listeners (ui.js)      */
     newGame();
     W.addEventListener("resize", onResize);
     rafId = requestAnimationFrame(tick);
   }
 
   function onResize() {
-    if (!P._renderCtx || !P._renderCtx.canvas) return;
-    P.Table.fit(P._renderCtx.canvas, W.innerWidth, W.innerHeight);
+    if (!P.WebGL3D) return;           /* headless: nothing to resize             */
+    P.WebGL3D.resize(W.innerWidth, W.innerHeight);
   }
 
   /* Expose the whole API on window.Poole.Game. `tick` is exported so the headless

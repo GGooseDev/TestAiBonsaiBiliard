@@ -1,23 +1,22 @@
-/* smoke-e2e.js — headless end-to-end check for the 8-ball game.
-   Drives the real P.Game / P.Render / P.Physics pipeline in Node (no DOM, no browser)
-   and emits openable SVG snapshots as "something showable".
-   Run:  node smoke-e2e.js */
+/* smoke-e2e.js — headless end-to-end check for the 16-ball engine.
+   Drives the real P.Game / P.Physics / P.Rules pipeline in Node (no DOM, no
+   WebGL). The 3D renderer is stubbed as a no-op so game.js's P.WebGL3D.*
+   calls are harmless here; what matters is that state -> physics -> rules ->
+   loop runs without throwing. As evidence it emits openable top-down SVG
+   snapshots of the logical state (something you can open in a browser).
+   Run:  node smoke-e2e.js
+   Exits 0 if the full pipeline runs through a break and post-break state. */
 
 var fs = require("fs");
 
-// ---------------------------------------------------------------- env stubs ---
-globalThis.window = globalThis;                          /* every module does `var W = window` */
-globalThis.requestAnimationFrame = function () { return 0; };  /* no-op: we drive frames manually */
+/* Harness convention: `window` is the global object, every module attaches its
+   API to window.Poole via a `var W = window` IIFE. No timers in Node. */
+globalThis.window = globalThis;
+globalThis.requestAnimationFrame = function () { return 0; };
 globalThis.setTimeout = function () { return 0; };
 globalThis.clearTimeout = function () {};
 if (!globalThis.performance) globalThis.performance = {};
 globalThis.performance.now = Date.now;
-
-var loadOrder = [
-  "src/config.js", "src/vec.js", "src/ball.js", "src/table.js",
-  "src/physics.js", "src/rules.js", "src/player.js", "src/bot.js",
-  "src/ui.js", "src/render.js", "src/game.js"
-];
 
 function loadModule(relPath) {
   var code = fs.readFileSync(relPath, "utf8");
@@ -29,7 +28,22 @@ function fail(msg) { console.log("[FAIL] " + msg); process.exit(1); }
 function ok(label) { console.log("[OK] " + label); }
 
 try {
-  for (var i = 0; i < loadOrder.length; i++) loadModule(loadOrder[i]);
+  /* Logic modules only. webgl3d.js is a browser/WebGL module (needs THREE);
+     we stub it below so game.js's P.WebGL3D.* calls in Node are no-ops. */
+  ["src/config.js", "src/vec.js", "src/ball.js", "src/table.js",
+   "src/physics.js", "src/rules.js", "src/player.js", "src/bot.js", "src/ui.js"]
+    .forEach(loadModule);
+
+  if (!globalThis.Poole.WebGL3D) {
+    globalThis.Poole.WebGL3D = {
+      init: function () {},
+      resize: function () {},
+      draw: function () {},
+      pop: function () {},
+      screenToTableLogical: function () { return null; }
+    };
+  }
+  loadModule("src/game.js");
 } catch (e) { fail("module load threw: " + e.message); }
 
 var C = globalThis.Poole.CONFIG;
@@ -37,72 +51,21 @@ var T = globalThis.Poole.Table;
 var U = globalThis.Poole.UI;
 var G = globalThis.Poole.Game;
 
-// ------------------------------------------------ mock canvas + strict ctx ---
-function makeCanvas(w, h) {
-  var ops = { n: 0 };
-  return {
-    width: w, height: h,
-    getContext: function (type) {
-      if (type !== "2d") fail("unsupported context: " + type);
-      function finite(v, name) { if (typeof v === "number" && !isFinite(v)) throw new Error("non-finite in " + name + "() : " + v); }
-      return {
-        fillStyle: "", strokeStyle: "", lineWidth: 1, globalAlpha: 1, lineCap: "butt",
-        font: "", textAlign: "left", textBaseline: "alphabetic", shadowColor: "", shadowBlur: 0,
-        save: function () { ops.n++; return this; },
-        restore: function () { ops.n++; return this; },
-        translate: function (x, y) { finite(x,"t");finite(y,"t");ops.n++;return this; },
-        scale: function (x, y) { finite(x,"s");finite(y,"s");ops.n++;return this; },
-        rotate: function (a) { finite(a,"r");ops.n++;return this; },
-        setTransform: function () { ops.n++; return this; },
-        beginPath: function () { ops.n++; return this; },
-        closePath: function () { ops.n++; return this; },
-        moveTo: function (x, y) { finite(x,"m");finite(y,"m");ops.n++;return this; },
-        lineTo: function (x, y) { finite(x,"l");finite(y,"l");ops.n++;return this; },
-        quadCurveTo: function () { ops.n++; return this; },
-        bezierCurveTo: function () { ops.n++; return this; },
-        arc: function (cx,cy,r,a0,a1) { finite(cx,"a");finite(cy,"a");finite(r,"a");finite(a0,"a");finite(a1,"a");ops.n++;return this; },
-        arcTo: function () { ops.n++; return this; },
-        ellipse: function () { ops.n++; return this; },
-        rect: function (x,y,w,h) { finite(x,"r");finite(y,"r");finite(w,"r");finite(h,"r");ops.n++;return this; },
-        strokeRect: function (x,y,w,h) { finite(x,"sr");finite(y,"sr");finite(w,"sr");finite(h,"sr");ops.n++;return this; },
-        fillRect: function (x,y,w,h) { finite(x,"fr");finite(y,"fr");finite(w,"fr");finite(h,"fr");ops.n++;return this; },
-        fill: function () { ops.n++; return this; },
-        stroke: function () { ops.n++; return this; },
-        clip: function () { ops.n++; return this; },
-        setLineDash: function (arr) { ops.n++; return this; },
-        drawImage: function () { ops.n++; return this; },
-        fillText: function (t,x,y) { finite(x,"ft");finite(y,"ft");ops.n++;return this; },
-        createLinearGradient: function (x0,y0,x1,y1) {
-          finite(x0,"clg");finite(y0,"clg");finite(x1,"clg");finite(y1,"clg"); return { addColorStop: function () {} };
-        },
-        createRadialGradient: function (cx0,cy0,r0,cx1,cy1,r1) {
-          finite(cx0,"crg");finite(cy0,"crg");finite(r0,"crg");finite(cx1,"crg");finite(cy1,"crg");finite(r1,"crg"); return { addColorStop: function () {} };
-        }
-      };
-    },
-    __ops: ops
-  };
-}
+/* Table transform for the SVG snapshots (headless: we only need the mapping). */
+T.fit({ width: 0, height: 0 }, 1600, 900);
+var W = 1600, H = 900;
 
-var mockCanvas = makeCanvas(1600, 900);
-var mockCtx = mockCanvas.getContext("2d");
-globalThis.Poole._renderCtx = mockCtx;   /* game.js tick() reads P._renderCtx */
-U.canvas = mockCanvas;
-T.fit(mockCanvas, 1600, 900);
-
-// ------------------------------------------------ seed + smoke draw ----------
+/* ---- seed + smoke-drive ---------------------------------------------
+   The renderer is a headless no-op, so we assert the loop *doesn't throw* and
+   that state evolves, not on pixel output. */
 try { G.newGame(); } catch (e) { fail("P.Game.newGame() threw: " + e.message); }
 var state = globalThis.Poole.State();
 if (!state) fail("P.State() returned null after newGame");
+if (state.balls.length !== 16) fail("expected 16 balls, got " + state.balls.length);
+ok("newGame: 16 balls on table, phase=" + state.phase + ", turn=human");
 
-for (var f = 0; f < 30; f++) {
-  try { G.tick(); } catch (e) { fail("draw loop threw in frame " + f + ": " + e.message); }
-}
-var opsBefore = mockCanvas.__ops.n;
-for (var f2 = 0; f2 < 400; f2++) G.tick();
-if (mockCanvas.__ops.n - opsBefore < 300) {
-  fail("too few render ops (table/balls not drawn): " + (mockCanvas.__ops.n - opsBefore));
-}
+for (var f = 0; f < 50; f++) { G.tick(); }   /* must not throw */
+ok("50 idle frames ran without throwing");
 
 function SC(x, y) { return { x: T.offX + x * T.size, y: T.offY + y * T.size }; }
 var onTable = 0;
@@ -111,16 +74,15 @@ state.balls.forEach(function (b) {
   if (!isFinite(s.x) || !isFinite(s.y)) fail("non-finite ball " + b.id + ": " + JSON.stringify({ x: b.x, y: b.y }));
   if (!b.inPocket) onTable++;
 });
-ok("430 frames rendered — " + (mockCanvas.__ops.n - opsBefore) + " draw ops, " + onTable + "/" + state.balls.length + " balls on table");
+emitSVG("snapshot-rack.svg", state, false);
+ok("snapshot-rack.svg emitted; " + onTable + "/" + state.balls.length + " balls on table");
 
-// ------------------------------------------------ fire the break shot --------
+/* ---- aim + fire the break ------------------------------------------- */
 U.aiming = true; U.shootable = true; U.power = 0.65;
 U.aimX = state.cue.x - 220; U.aimY = state.cue.y + 180;
-G.tick();
+emitSVG("snapshot-aim.svg", state, true);     /* rack + cue stick + dash line */
 
-emitSVG("snapshot-rack.svg", state, false);   // clean rack
-emitSVG("snapshot-aim.svg", state, true);     // rack + cue stick + dash line
-
+/* Reversed-aim convention (ui.js): the cue flies AWAY from the pointer. */
 U.onFire({ vx: 45, vy: -C.MAX_SHOT_SPEED * 0.82 });
 var settled = 0, MAX_FRAMES = 8000;
 while (state.shotInFlight && settled < MAX_FRAMES) { G.tick(); settled++; }
@@ -131,31 +93,27 @@ emitSVG("snapshot-after.svg", state, false);
 var onTable2 = 0; state.balls.forEach(function (b) { if (!b.inPocket) onTable2++; });
 ok("post-break: " + onTable2 + " balls still on table");
 
-/* ---------------- extra showable frames ----------------
-   The two frames below exercise render paths that the earlier
-   break-scene snapshots never covered: the full-screen game-over
-   overlay (drawGameOver) and a foul float (drawFloatMessages). */
+/* ---- extra showable frames (top-down schematic) -------------------------
+   Exercise state paths the break scene never covers: a game-over flag (DOM
+   #gameover overlay) and a freshly re-spotted cue (foul). */
 
-/* (A) clean win by "You": 8-ball pocketed + game-over overlay + win float. */
+/* (A) clean win by "You": 8-ball pocketed + gameOver -> overlay. */
 {
   var stW = globalThis.Poole.State();
   for (var wi = 0; wi < stW.balls.length; wi++) { if (stW.balls[wi].id === 8) { stW.balls[wi].inPocket = true; } }
   stW.gameOver = true;
-  stW.winner = stW.players[0];                        /* name "You" */
+  stW.winner = stW.players[0];                        /* "You" */
   stW.message = stW.winner.name + " wins! Click to play again.";
-  globalThis.Poole.Render.showFloatMsg(stW.winner.name + " WINS!", "170,245,120");
-  emitSVG("snapshot-win.svg", stW, false, true);      /* 4th arg = render floats + overlay */
+  emitSVG("snapshot-win.svg", stW, false, true);      /* 4th arg = overlay on */
 }
 
-/* (B) scratch foul: fresh full rack, cue re-spotted to centre, "SCRATCH - foul" float. */
+/* (B) scratch foul: fresh full rack, cue re-spotted to centre. */
 {
   G.newGame();                                        /* pristine 16-ball state */
   var stF = globalThis.Poole.State();
   if (stF.cue) { stF.cue.x = C.CENTER.x; stF.cue.y = C.CENTER.y; }
-  stF.floatMessages = [];
   stF.message = "SCRATCH - foul (cue back to centre)";
-  globalThis.Poole.Render.showFloatMsg("SCRATCH - foul", "255,96,74");
-  emitSVG("snapshot-foul.svg", stF, false, true);
+  emitSVG("snapshot-foul.svg", stF, false);
 }
 
 var files = ["snapshot-rack.svg", "snapshot-aim.svg", "snapshot-after.svg", "snapshot-win.svg", "snapshot-foul.svg"];
@@ -164,14 +122,13 @@ for (var a = 0; a < files.length; a++) {
 }
 console.log("\nSnapshots written to repo root. Open a .svg file in any browser.");
 
-  /* showOverlay: also render rising float text (floats) and the full-screen game-over
-     overlay (when st.gameOver), matching src/render.js drawFloatMessages/drawGameOver. */
-  function emitSVG(path, st, withAim, showOverlay) {
+/* ---- top-down SVG snapshot (logical coords). Pure Node, no canvas. ----
+   Renders the current state's balls/rack/rail as an openable <svg>. `st` is
+   the specific state object to snapshot. */
+function emitSVG(path, st, withAim, showOverlay) {
   var size = T.size, ox = T.offX, oy = T.offY;
   function sc(lx, ly) { return { x: ox + lx * size, y: oy + ly * size }; }
   var r = C.BR * size, pr = C.POCKET_R * size;
-  var W = 1600, H = 900;
-
   var o = ['<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'];
   o.push('<defs>' +
     '<radialGradient id="shine" cx="0.30" cy="0.28" r="1">' +
@@ -187,7 +144,7 @@ console.log("\nSnapshots written to repo root. Open a .svg file in any browser."
   var left = ox + C.IX0 * size, up = oy + C.IY0 * size, right = ox + C.IX1 * size, down = oy + C.IY1 * size;
   o.push('<rect x="' + left + '" y="' + up + '" width="' + (right - left) + '" height="' + (down - up) + '" fill="url(#felt)"/>');
 
-  // dark wood frame + light highlight border
+  /* dark wood frame + light highlight border */
   o.push('<rect x="' + (ox + (C.IX0 + 17) * size) + '" y="' + (oy + (C.IY0 + 17) * size) + '" width="' + (C.IX1 - C.IX0 - 34) * size +
     '" height="' + (C.IY1 - C.IY0 - 34) * size + '" fill="none" stroke="#2e1608" stroke-width="' + r + '"/>');
   o.push('<rect x="' + (ox + (C.IX0 + 1) * size) + '" y="' + (oy + (C.IY0 + 1) * size) + '" width="' + (C.IX1 - C.IX0 - 2) * size +
@@ -204,7 +161,7 @@ console.log("\nSnapshots written to repo root. Open a .svg file in any browser."
     o.push('<circle cx="' + p.x + '" cy="' + p.y + '" r="' + (pr * 0.65).toFixed(1) + '" fill="#050704" opacity="0.5"/>');
   }
 
-  state.balls.forEach(function (b) {
+  st.balls.forEach(function (b) {
     if (b.inPocket) return;
     var s = sc(b.x, b.y);
     var hex = b.color || "#f0f0f0";
@@ -231,7 +188,7 @@ console.log("\nSnapshots written to repo root. Open a .svg file in any browser."
     var cu = st.cue;
     var dx = U.aimX - cu.x, dy = U.aimY - cu.y;
     var dl = Math.sqrt(dx * dx + dy * dy) || 1;
-    var dirx = -(dx / dl), diry = -(dy / dl);   // real shot direction (away from pointer)
+    var dirx = -(dx / dl), diry = -(dy / dl);   /* real shot direction (away from pointer) */
     var ls = sc(cu.x + dirx * (C.BR + 46), cu.y + diry * (C.BR + 46));
     var le = sc(cu.x + dirx * 470, cu.y + diry * 470);
     o.push('<line x1="' + ls.x + '" y1="' + ls.y + '" x2="' + le.x + '" y2="' + le.y +
@@ -248,40 +205,25 @@ console.log("\nSnapshots written to repo root. Open a .svg file in any browser."
     o.push('<circle cx="' + tip.x + '" cy="' + tip.y + '" r="' + (r * 0.6).toFixed(1) + '" fill="#7e8b95"/>');
   }
 
-   if (showOverlay) {
-     /* Rising float text (logical coords) — static peak-alpha frame.
-        Mirrors render.js drawFloatMessages(): bold, sized ~2*ball radius. */
-     var msgs = st.floatMessages || [];
-     for (var qi = 0; qi < msgs.length; qi++) {
-       var m = msgs[qi];
-       var ms = sc(m.x, m.y);
-       o.push('<text x="' + ms.x.toFixed(1) + '" y="' + ms.y.toFixed(1) + '" ' +
-         'text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" ' +
-         'font-size="' + (C.BR * 2 * size).toFixed(1) + '" fill="rgb(' + m.rgb + ')" ' +
-         'fill-opacity="1">' + escapeXml(m.text) + '</text>');
-     }
+  if (showOverlay) {
+    /* Full-screen game-over overlay (screen coords) — mirrors the DOM #gameover
+       centre card, shown only while state.gameOver. */
+    var minDim = Math.min(W, H);
+    var fs1 = Math.round(minDim * 0.07), fs2 = Math.round(minDim * 0.04);
+    o.push('<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#000" opacity="0.5"/>');
+    var winName = st.winner ? st.winner.name : "?";
+    o.push('<text x="' + (W / 2) + '" y="' + (H / 2 - minDim * 0.03).toFixed(1) + '" ' +
+      'text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" ' +
+      'font-size="' + fs1 + '" fill="#ffffff">' + escapeXml("Game over - " + winName + " wins!") + '</text>');
+    o.push('<text x="' + (W / 2) + '" y="' + (H / 2 + minDim * 0.06).toFixed(1) + '" ' +
+      'text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" ' +
+      'font-size="' + fs2 + '" fill="#ffffff">' + escapeXml("Click the table to play again") + '</text>');
+  }
 
-     /* Full-screen game-over overlay (screen coords) — mirrors drawGameOver(). */
-     if (st.gameOver) {
-       o.push('<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#000" opacity="0.5"/>');
-       var winName = st.winner ? st.winner.name : "?";
-       var minDim = Math.min(W, H);
-       var fs1 = Math.round(minDim * 0.07), fs2 = Math.round(minDim * 0.04);
-       o.push('<text x="' + (W / 2) + '" y="' + (H / 2 - minDim * 0.03).toFixed(1) + '" ' +
-         'text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" ' +
-         'font-size="' + fs1 + '" fill="#ffffff">' + escapeXml("Game over - " + winName + " wins!") + '</text>');
-       o.push('<text x="' + (W / 2) + '" y="' + (H / 2 + minDim * 0.06).toFixed(1) + '" ' +
-         'text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" ' +
-         'font-size="' + fs2 + '" fill="#ffffff">' + escapeXml("Click the table to play again") + '</text>');
-     }
-   }
+  o.push('<text x="' + W / 2 + '" y="' + (H - 8) + '" font-family="Arial" font-size="14" ' +
+    'fill="#9fd7ff" text-anchor="middle">' + escapeXml(st.message || "") + '</text>');
 
-   o.push('<text x="' + W / 2 + '" y="' + (H - 8) + '" font-family="Arial" font-size="14" ' +
-     'fill="#9fd7ff" text-anchor="middle">' + escapeXml(st.message || "") + '</text>');
-
-   o.push('</svg>');
-  /* o[0] is already the full <svg ...> open tag and the last is </svg>; do NOT
-     wrap the joined array in extra angle brackets (that produced invalid XML). */
+  o.push('</svg>');
   fs.writeFileSync(path, o.join(""), "utf8");
 }
 

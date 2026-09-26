@@ -32,12 +32,15 @@
     var best = null;
     for (var pi = 0; pi < C.pockets.length; pi++) {
       var pk = C.pockets[pi];
-      /* ghost contact point: where cue must hit the target to send it toward the pocket */
+      /* ghost ball: the ideal cue-centre position for a clean head‑on hit.
+         For equal masses the cue centre sits 2 radii from the target on the
+         far side (opposite the pocket); aiming at it makes the target travel
+         along the target->pocket line. */
       var tdpx = target.x - pk.x, tdpy = target.y - pk.y;
       var tpd = P.Vec.hypot(tdpx, tdpy);
       if (tpd < 1e-9) continue;
       var nx = tdpx / tpd, ny = tdpy / tpd;
-      var gx = target.x + nx * C.BR, gy = target.y + ny * C.BR;
+      var gx = target.x + nx * C.BR * 2, gy = target.y + ny * C.BR * 2;
 
       /* shot direction is cue -> ghost point */
       var sx = gx - cue.x, sy = gy - cue.y;
