@@ -48,17 +48,41 @@
 
    /* cue stick visuals — the visible stick (tip to butt) rests at CUE_STICK_LEN so it never
       reads as a stub, and is pulled further from the ball by CUE_MAX_EXTEND as power rises. */
-   C.CUE_STICK_LEN = 240;
-   C.CUE_MAX_EXTEND = 160;
-   C.CUE_SHAFT_W = 7;
+    C.CUE_STICK_LEN = 240;
+    /* Legacy world-unit extension cap, kept for reference. Cue length is now driven
+       by the on-screen-framed extension (_cueMaxOnScreenOff) so it reads the same
+       regardless of aim direction; this value no longer sets the maximum length. */
+    C.CUE_MAX_EXTEND = 160;
+    C.CUE_SHAFT_W = 7;
+    /* Cue extension is framed to stay inside the viewport: the butt end may reach at
+       most C.CUE_MAX_WORLD_OFF world units from the ball (bisection upper bound),
+       and stops C.CUE_SCREEN_INSET_FRAC of min(width,height) px short of the frame edge. */
+    C.CUE_MAX_WORLD_OFF = 1500;
+    C.CUE_SCREEN_INSET_FRAC = 0.04;
 
   /* effects */
   C.SHAKE_MS = 700;
-  C.BOKEH_COUNT = 14;
-  C.BOKEH_MIN_R = 90;
-  C.BOKEH_VAR_R = 150;
-  C.BOKEH_CORE_ALPHA = 0.5;
-  C.BOKEH_MID_ALPHA = 0.2;
+  C.BOKEH_COUNT = 26;                          /* out-of-focus bokeh orbs behind the table */
+  C.BOKEH_MIN_R = 160;                          /* smallest orb size, world units   */
+  C.BOKEH_VAR_R = 200;                          /* max extra radius, world units    */
+  C.BOKEH_CORE_ALPHA = 0.65;                    /* bright point of light (keeps hue) */
+  C.BOKEH_MID_ALPHA = 0.32;                     /* soft out-of-focus halo           */
+  C.BOKEH_RING_ALPHA = 0.15;                    /* faint rim, classic bokeh edge    */
+  C.BOKEH_DRIFT = 0.12;                         /* per-disc drift amplitude, uv units*/
+  C.BOKEH_FLOW = 0.06;                         /* autonomous whole-field pan, uv    */
+  C.BOKEH_SPEED = 0.20;                        /* drift speed scale, rad/s          */
+  C.BOKEH_ROT_SPEED = 0.05;                    /* autonomous field rotation speed   */
+  C.BOKEH_ROT_A = 0.03;                        /* rotation amplitude (rad), term A  */
+  C.BOKEH_ROT_B = 0.018;                       /* rotation amplitude (rad), term B  */
+  C.BOKEH_PARALLAX = 1.0;                      /* field slide vs camera offset      */
+  C.BOKEH_PALETTE = [                         /* hex colors, brightest-first warm accent included */
+    "#7aa3ff",  /* blue  */
+    "#b18cff",  /* violet */
+    "#6fd8ce",  /* teal  */
+    "#ffb45e",  /* amber */
+    "#ff7f9e",  /* pink  */
+    "#7ae0a4"   /* mint  */
+  ];
   C.FLASH_MS = 1800;
   C.MSG_RISE = 80;
   C.TARGET_RING_R = C.BR + 3;

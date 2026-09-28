@@ -295,6 +295,15 @@
       var phys = P.Physics;
       if (phys.anyMoving()) {
         phys.integrateStep(C.STEP);
+
+        /* Ball-rail impacts trigger a brief screen shake, scaled to impact speed.
+           Previously shakeUntil was only set from popFloat messages. */
+        var railImp = phys.railImpulse;
+        phys.railImpulse = 0;
+        if (railImp >= 0.12) {
+          state.shakeUntil = Math.max(state.shakeUntil || 0,
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) + C.SHAKE_MS * (0.5 + railImp * 0.6));
+        }
       } else {
         state.shotInFlight = false;
         handleShotOutcome();

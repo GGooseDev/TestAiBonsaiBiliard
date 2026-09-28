@@ -17,7 +17,10 @@
     var dx = P.UI.aimX - state.cue.x;
     var dy = P.UI.aimY - state.cue.y;
     var d = P.Vec.hypot(dx, dy);
-    var maxDrag = 340;
+    /* full pull -> power 1.0, driven by the single source of truth in
+       config.js (C.POWER_MAX_DIST); replacing the old hard-coded 340 so the
+       drag-to-power ramp is one tunable knob, not a magic number */
+    var maxDrag = C.POWER_MAX_DIST;
     P.UI.power = Math.max(0, Math.min(1, d / maxDrag));
   }
 
@@ -70,28 +73,51 @@
   }
 
   /* Map a mouse/touch event to table-logical coords. The WebGL renderer owns the
-     camera + felt geometry, so it does the perspective ray-cast (screenToTableLogical).
-     Falls back to the flat 2D frame only if the 3D renderer isn't available yet. */
+     camera + felt geometry. When the cue ball's logical centre is supplied it uses
+     the on-screen-offset mapping (screenToTableLogical with cx,cy), which points the
+     cue where you point even when the cursor hovers over the elevated ball; the
+     plain raycast is kept only for compatibility. Falls back to the flat 2D frame
+     only before the 3D renderer owns the canvas. */
   function toLogical(e) {
-    var hit = P.WebGL3D ? P.WebGL3D.screenToTableLogical(e.clientX, e.clientY) : null;
-    if (hit && isFinite(hit.x) && isFinite(hit.y)) return hit;
-
-    /* fallback: flat transform (headless / resize-before-init). */
+    var cx = state && state.cue ? state.cue.x : null;
+    var cy = state && state.cue ? state.cue.y : null;
+    var hit = null;
+    if (P.WebGL3D) {
+      hit = (cx != null && cy != null)
+        ? P.WebGL3D.screenToTableLogical(e.clientX, e.clientY, cx, cy)
+        : P.WebGL3D.screenToTableLogical(e.clientX, e.clientY);
+      if (hit && isFinite(hit.x) && isFinite(hit.y)) {
+        P.UI.lastAim = { x: hit.x, y: hit.y };
+        return hit;
+      }
+    }
+    /* GL returned null. If we already have a good aim (mid-aim, e.g. the cursor
+       sitting on the ball for one frame), hold it to avoid jumping to a mis-scaled
+       flat point. The flat transform is only safe before the renderer owns the
+       canvas (headless / resize-before-init). */
+    if (P.UI.lastAim) return P.UI.lastAim;
     var cr = P.UI.canvas && P.UI.canvas.getBoundingClientRect ? P.UI.canvas.getBoundingClientRect() : null;
     var sx = e.clientX - (cr ? cr.left : 0), sy = e.clientY - (cr ? cr.top : 0);
-    return { x: (sx - P.Table.offX) / P.Table.size, y: (sy - P.Table.offY) / P.Table.size };
+    var out = { x: (sx - P.Table.offX) / P.Table.size, y: (sy - P.Table.offY) / P.Table.size };
+    P.UI.lastAim = out;
+    return out;
   }
 
-   P.UI = {
-     shootable: false,   /* set by the game when it is a human's turn to aim */
-     onFire: null,        /* game-provided callback: onFire(shot) */
-     aiming: false,
-     aimX: 0, aimY: 0,   /* pointer position in logical coords (human only) */
-     power: 0,
-     botAiming: false,   /* set by the game while a bot shot is being planned */
-     botAimX: 0, botAimY: 0, /* virtual cue-stick direction for the bot's plan */
-     botPower: 0,
-     attach: attach,
-     setState: setState
-   };
+    P.UI = {
+      shootable: false,   /* set by the game when it is a human's turn to aim */
+      onFire: null,        /* game-provided callback: onFire(shot) */
+      aiming: false,
+      aimX: 0, aimY: 0,   /* pointer position in logical coords (human only) */
+      power: 0,
+      botAiming: false,   /* set by the game while a bot shot is being planned */
+      botAimX: 0, botAimY: 0, /* virtual cue-stick direction for the bot's plan */
+      botPower: 0,
+      /* aim flow also exported so the drag->power mapping can be driven
+         headlessly (smoke-e2e.js) without a real canvas or DOM events */
+      startAim: startAim,
+      moveAim: moveAim,
+      endAim: endAim,
+      attach: attach,
+      setState: setState
+    };
 })();

@@ -11,6 +11,7 @@
     size: 1,
     offX: 0,
     offY: 0,
+    transformApplied: false, /* set true only by fit(); the browser (GL) path never calls fit() */
 
     /* Build all 15 object balls in a standard 8-ball triangle:
        apex at the foot (top), 8 in the centre, back corners solid/stripe.
@@ -44,16 +45,29 @@
       return -1;
     },
 
-    /* Resize the canvas to fill the window and compute the logical->screen transform. */
-    fit: function (canvas, winW, winH) {
-      var topM = 44, botM = 52;
-      var s = Math.min(winW / C.CANVAS_W, (winH - topM - botM) / C.CANVAS_H);
-      if (s < 0.2) s = 0.2;
-      P.Table.size = s;
-      P.Table.offX = (winW - s * C.CANVAS_W) / 2;
-      P.Table.offY = topM + ((winH - topM - botM) - s * C.CANVAS_H) / 2;
-      canvas.width = winW;
-      canvas.height = winH;
-    }
+   /* Transform math shared by fit() and the flat fallback, without touching the
+      canvas. The browser (WebGL) path owns the canvas and never calls fit(), so
+      this is how the fallback gets a real transform instead of raw pixels. */
+   computeTransform: function (winW, winH) {
+     var topM = 44, botM = 52;
+     var s = Math.min(winW / C.CANVAS_W, (winH - topM - botM) / C.CANVAS_H);
+     if (s < 0.2) s = 0.2;
+     return {
+       size: s,
+       offX: (winW - s * C.CANVAS_W) / 2,
+       offY: topM + ((winH - topM - botM) - s * C.CANVAS_H) / 2
+     };
+   },
+
+   /* Resize the canvas to fill the window and compute the logical->screen transform. */
+   fit: function (canvas, winW, winH) {
+     var t = P.Table.computeTransform(winW, winH);
+     P.Table.size = t.size;
+     P.Table.offX = t.offX;
+     P.Table.offY = t.offY;
+     canvas.width = winW;
+     canvas.height = winH;
+     P.Table.transformApplied = true;
+   }
   };
 })();

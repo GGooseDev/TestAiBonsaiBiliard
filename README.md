@@ -79,7 +79,7 @@ From the original Poole monolith, carried into `src/render.js` unchanged in feel
 | `BALL_RESTITUTION` | elastic ball–ball impulse | 0.9 |
 | `CUSHION_E`, `TANGENT_KEEP` | rail bounce / tangential damping | 0.85, 0.985 |
 | `STEP` / `MAX_STEPS_PER_FRAME` | fixed timestep / cap | 1/60, 8 |
-| `MAX_SHOT_SPEED`, `POWER_MAX_DIST` | shooting power limits | 620, 340 |
+| `MAX_SHOT_SPEED`, `POWER_MAX_DIST` | shooting power limits | 1240, 240 |
 
 ## Testing (Node only)
 

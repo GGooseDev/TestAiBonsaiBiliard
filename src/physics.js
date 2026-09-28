@@ -11,10 +11,11 @@
     balls: [],          /* all balls incl. cue */
     cueBall: null,
     firstContact: false,   /* cue struck any object ball this shot? */
-    cuePocketed: false,    /* cue went in on this shot? */
-    pocketedThisShot: []   /* { id } for object balls pocketed this shot */
+     cuePocketed: false,    /* cue went in on this shot? */
+     pocketedThisShot: [],  /* { id } for object balls pocketed this shot */
+     railImpulse: 0         /* max rail-impact intensity (0..1) this fixed step; consumed by P.Game.tick() for screen shake */
 
-  ,
+   ,
     /* Reset bookkeeping before each shot. */
     resetShot: function () {
       this.firstContact = false;
@@ -40,9 +41,10 @@
 
     /* One fixed step of the sim: integrate, pockets, rails, freeze, ball-ball passes. */
     integrateStep: function (dt) {
-      var balls = this.balls;
+       var balls = this.balls;
+       var railPulse = 0;   /* max impact speed at a rail during this step (measured pre-reflect) */
 
-      for (var i = 0; i < balls.length; i++) {
+       for (var i = 0; i < balls.length; i++) {
         var b = balls[i];
         if (b.inPocket) continue;
 
@@ -58,25 +60,35 @@
         if (pi >= 0) { this.sink(b, pi); continue; }
 
         /* rail collision: only on real penetration while heading into the rail */
-        if (b.x < C.IX0 + C.BR && b.vx < 0) {
-          b.x = C.IX0 + C.BR; b.vx *= -C.CUSHION_E; b.vy *= C.TANGENT_KEEP;
-        }
-        if (b.x > C.IX1 - C.BR && b.vx > 0) {
-          b.x = C.IX1 - C.BR; b.vx *= -C.CUSHION_E; b.vy *= C.TANGENT_KEEP;
-        }
-        if (b.y < C.IY0 + C.BR && b.vy < 0) {
-          b.y = C.IY0 + C.BR; b.vy *= -C.CUSHION_E; b.vx *= C.TANGENT_KEEP;
-        }
-        if (b.y > C.IY1 - C.BR && b.vy > 0) {
-          b.y = C.IY1 - C.BR; b.vy *= -C.CUSHION_E; b.vx *= C.TANGENT_KEEP;
-        }
+         if (b.x < C.IX0 + C.BR && b.vx < 0) {
+           railPulse = Math.max(railPulse, P.Vec.hypot(b.vx, b.vy));
+           b.x = C.IX0 + C.BR; b.vx *= -C.CUSHION_E; b.vy *= C.TANGENT_KEEP;
+         }
+         if (b.x > C.IX1 - C.BR && b.vx > 0) {
+           railPulse = Math.max(railPulse, P.Vec.hypot(b.vx, b.vy));
+           b.x = C.IX1 - C.BR; b.vx *= -C.CUSHION_E; b.vy *= C.TANGENT_KEEP;
+         }
+         if (b.y < C.IY0 + C.BR && b.vy < 0) {
+           railPulse = Math.max(railPulse, P.Vec.hypot(b.vx, b.vy));
+           b.y = C.IY0 + C.BR; b.vy *= -C.CUSHION_E; b.vx *= C.TANGENT_KEEP;
+         }
+         if (b.y > C.IY1 - C.BR && b.vy > 0) {
+           railPulse = Math.max(railPulse, P.Vec.hypot(b.vx, b.vy));
+           b.y = C.IY1 - C.BR; b.vy *= -C.CUSHION_E; b.vx *= C.TANGENT_KEEP;
+         }
 
         if (Math.abs(b.vx) < C.STOP_SPEED && Math.abs(b.vy) < C.STOP_SPEED) {
           b.vx = 0; b.vy = 0;
         }
-      }
+       }
 
-      /* ball-ball contacts over several passes so tight groups separate cleanly */
+       /* Normalize this step's max rail impact speed to a 0..1 shake strength.
+          Zero when no rail was struck; consumed (and reset) by P.Game.tick(). */
+       this.railImpulse = railPulse > 0
+         ? Math.min(1, railPulse / (C.MAX_SHOT_SPEED * 0.35))
+         : 0;
+
+       /* ball-ball contacts over several passes so tight groups separate cleanly */
       for (var pass = 0; pass < C.COLLIDE_PASSES; pass++) {
         var changed = false;
         for (var a = 0; a < balls.length; a++) {

@@ -7,8 +7,40 @@
 (function () {
   var W = window, P = W.Poole;
   if (!P) W.Poole = P = {};
-  var C = P.CONFIG;
 
+  /* visible fallback for hard init failures: without it the page just stays a
+     black rectangle and the only trace is a console error invisible to a user who
+     never opened F12. No-op in headless (no document). */
+  function showInitFail(msg) {
+    if (!W.document || !W.document.body) return;
+    try {
+      var el = W.document.createElement("div");
+      el.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;" +
+        "background:#a51b1b;color:#fff;font:bold 16px Arial,sans-serif;text-align:center;" +
+        "line-height:1.5;padding:32px;display:flex;align-items:center;justify-content:center;" +
+        "user-select:none;";
+      el.textContent = msg;
+      W.document.body.appendChild(el);
+    } catch (e) { /* no-op already guarded above */ }
+  }
+
+  /* three.min.js must be loaded before this module (script order in index.html).
+     If it wasn't, the page cannot render 3D at all — before this check the module
+     died with a ReferenceError at module level. Surface it on screen instead and
+     stub the API so game.js's start() keeps running non-rendering instead of
+     crashing. */
+  if (!W.THREE) {
+    if (console && console.error) console.error("webgl3d: THREE.js not loaded; 3D disabled");
+    showInitFail("THREE.js did not load (lib/three.min.js missing or failed). Open index.html from the folder that contains it, then hard-reload (Ctrl+Shift+R).");
+    W.Poole.WebGL3D = {
+      ok: function () { return false; },
+      init: function () {}, resize: function () {}, draw: function () {}, pop: function () {},
+      screenToTableLogical: function () { return null; }
+    };
+    return;
+  }
+
+  var C = P.CONFIG;
   var renderer = null, scene = null, camera = null;
   var raycaster = null, hitPlane = null;
   var hitVec = new THREE.Vector3();
@@ -21,8 +53,16 @@
   var cueGroup = null,
       aimLineMesh = null, targetMesh = null, targetRingMesh = null,
       shaftMesh = null, buttMesh = null;
-  var bokehMat = null;          /* animated room-backdrop shader (set in init) */
+  var bokehMat = null;          /* animated colored-glint backdrop shader (set in init) */
+  var bokehHalf = 0;            /* half side of the backdrop plane, world units; for parallax normalization */
+  var bokehMesh = null;         /* backdrop mesh, translated to cancel camera shake (set in init) */
+  var bokehMeshBasePos = new THREE.Vector3(); /* backdrop rest position, world units */
+  var DEBUG_BG = false;         /* index.html?debug_bg=1 : camera isolates the backdrop for verification */
+  /* resolved early (before any GL work) so triage banners in init() can run even
+     if renderer creation throws; the old late read at end of init() is removed. */
+  if (W.location && W.location.search.indexOf('debug_bg=1') >= 0) DEBUG_BG = true;
   var floats3d = [], goEl = null, goNameEl = null;
+  var bgFirstFrame = false;     /* triage: first-frame console line fires once (DEBUG_BG only) */
   var created = false;           /* init() is idempotent: a canvas holds one GL context */
   var glReady = false;           /* true once init() secured a working WebGL context */
 
@@ -34,13 +74,49 @@
      more overhead. FRAMEMARGIN keeps the whole felt + rails inside the frame with no
      background showing through the corners of the table. */
   var FOV = 46, TILT_DEG = 28, FRAMEMARGIN = 1.22;
-  var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
-  var MAX_ANISO = 4;       /* fixed clamp for ball-texture anisotropy (r150+ has no query method) */
+var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
+    var MAX_ANISO = 4;       /* fixed clamp for ball-texture anisotropy (r150+ has no query method) */
+    /* probe distance (logical/world units) used to build the per-frame tangent
+       basis for screen->logical aiming. Larger => smoother basis, smaller => less
+       projection error; 10 keeps the ball's on-screen footprint well resolved. */
+    var AIM_BASIS_STEP = 10;
   var FELT_TOP_Y = 0,      /* top surface of the felt */
       FELT_THICK = 12,     /* felt slab thickness (centered below its top)   */
-      REST_Y = C.BR;       /* ball centre height above felt top */
+       REST_Y = C.BR;       /* ball centre height above felt top */
+   var BOKEH_SIDE_REF = (Math.max(C.IX1 - C.IX0, C.IY1 - C.IY0) + RAIL_DEPTH * 16) * 2.2; /* original backdrop side; disc uv sizes normalize to this so they stay constant on screen when the plane is scaled up */
 
   function l2w(x, y, hy) { return new THREE.Vector3(x - CXw, hy, -(y - CYw)); }
+
+  /* Project a world point onto the current camera and return canvas pixel coords.
+     Used only for on-screen framing checks (is a point inside the viewport). */
+  function _ptToCanvas(v, w, h) {
+    var p = v.clone().project(camera);
+    return { x: (p.x + 1) * 0.5 * w, y: 1 - (p.y + 1) * 0.5 * h };
+  }
+
+  /* Largest world offset s (>= baseSl) at which the cue butt end is still inside the
+     viewport. The butt sits at l2w(cx-dx*s, cy-dy*s, REST_Y) lifted by s*0.14 in y,
+     matching the drawn stick exactly. Bounded by C.CUE_MAX_WORLD_OFF and inset from the
+     frame edge by C.CUE_SCREEN_INSET_FRAC so a full-power cue is always fully visible
+     and never clipped at the screen border. Returns baseSl when even the rest length
+     leaves the frame (should not happen). */
+  function _cueMaxOnScreenOff(dx, dy, cx, cy, baseSl, w, h) {
+    if (!camera) return baseSl;
+    var m = Math.max(12, Math.min(w, h) * (C.CUE_SCREEN_INSET_FRAC || 0.04));
+    function inside(s) {
+      var p = l2w(cx - dx * s, cy - dy * s, REST_Y);
+      p.y += s * 0.14; /* same lift the drawn butt end uses */
+      var sp = _ptToCanvas(p, w, h);
+      return sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m;
+    }
+    if (!inside(baseSl)) return baseSl;
+    var lo = baseSl, hi = C.CUE_MAX_WORLD_OFF || 1500;
+    for (var i = 0; i < 24; i++) {
+      var mid = (lo + hi) * 0.5;
+      if (inside(mid)) { lo = mid; } else { hi = mid; }
+    }
+    return lo;
+  }
 
   /* ray from canvas px,py to the felt plane; returns logical x,y (perspective-correct) */
   function _screenToLogical(px, py, cssW, cssH) {
@@ -55,6 +131,31 @@
       return { x: hitVec.x + CXw, y: CYw - hitVec.z };
     }
     return null; /* no plane hit: defer to flat fallback in ui.js */
+  }
+
+  /* Convert a cursor position (canvas px) to the corrected logical aim point for a
+     cue ball at logical (cx, cy). The aim is taken from the cursor's ON-SCREEN
+     offset relative to the projected ball, decomposed into a per-frame tangent
+     basis (two probe points one STEP in +X / +Y from the ball). This is immune to
+     the distortion of raycasting an elevated cursor down to the felt plane, which
+     made the cue point in a fixed direction when the cursor hovered near the ball.
+     Returns { x, y } in table logical units, or null when the cursor is on the
+     ball or the camera is not ready. */
+  function _aimFromScreen(px, py, cssW, cssH, cx, cy) {
+    if (!camera || !cssW || !cssH) return null;
+    var bp = _ptToCanvas(l2w(cx, cy, REST_Y), cssW, cssH);
+    var sx = px - bp.x, sy = py - bp.y;
+    var sm = Math.sqrt(sx * sx + sy * sy);
+    if (sm < 0.5) return null; /* cursor on the ball: no direction yet */
+    var rp  = _ptToCanvas(l2w(cx + AIM_BASIS_STEP, cy, REST_Y), cssW, cssH);
+    var upp = _ptToCanvas(l2w(cx, cy + AIM_BASIS_STEP, REST_Y), cssW, cssH);
+    var sr = { x: rp.x - bp.x, y: rp.y - bp.y };  /* screen vector of +X */
+    var su = { x: upp.x - bp.x, y: upp.y - bp.y };/* screen vector of +Y */
+    var det = sr.x * su.y - sr.y * su.x;
+    if (Math.abs(det) < 1e-6) return null;
+    var a = (sx * su.y - sy * su.x) / det; /* steps along +X */
+    var b = (sr.x * sy - sr.y * sx) / det; /* steps along +Y */
+    return { x: cx + a * AIM_BASIS_STEP, y: cy + b * AIM_BASIS_STEP };
   }
 
   /* distance along a logical shot direction from (x,y) to the felt boundary */
@@ -185,51 +286,121 @@
     x.fillText(n, cx, cy);
   }
 
-  /* Build the animated room-backdrop (bokeh) floor. N soft, out-of-focus light
-     discs drift and pulse in uv space so the area around the table reads as a
-     blurred camera background. Foreground (balls / rails / cue) stays on standard
-     lit materials; this single shader is purely decorative backdrop. */
+  /* normalize one palette entry to [r,g,b] floats in 0..1. Color constants in this
+     project are hex strings (#rrggbb, cf. C.COLORS) so the glint palette entries are
+     parsed here instead of being assumed numeric; malformed entries fall back to a
+     neutral warm tone rather than NaN, which would darken the whole field. */
+  var BOKEH_FALLBACK_RGB = [0.55, 0.65, 1.0];
+  function hexToRgb01(input) {
+    var s = String(input).replace(/^\s*#*/, '');
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    if (s.length !== 6) return null;
+    var n = parseInt(s, 16);
+    if (!isFinite(n) || n < 0) return null;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function normColor(entry) {
+    var raw = hexToRgb01(entry);
+    var out;
+    if (raw) {
+      out = [raw[0] / 255, raw[1] / 255, raw[2] / 255];
+    } else if (Array.isArray(entry) && entry.length >= 3) {
+      out = [entry[0], entry[1], entry[2]];
+    } else {
+      out = BOKEH_FALLBACK_RGB.slice();
+    }
+    if (!isFinite(out[0]) || !isFinite(out[1]) || !isFinite(out[2])) {
+      return BOKEH_FALLBACK_RGB.slice();
+    }
+    return out;
+  }
+
+  /* Build the animated backdrop: a field of colored soft glints behind and around
+      the table (a large plane under the legs). Every disc carries a random hue from
+      C.BOKEH_PALETTE, a phase, and its own drift speed so the whole layer "walks"
+      smoothly on its own (pan + very slow rotation, set per-frame via uFlow/uRot),
+      and additionally slides against camera motion (uCamPar) — i.e. when the view
+      tilts/rotates the colored lights move behind the table. Purely decorative;
+      foreground uses standard lit materials. */
   function makeBokehFloor(side) {
-    var N = 14,
-        posArr = new Float32Array(N * 2),
-        radArr = new Float32Array(N),
-        colArr = new Float32Array(N * 3);
+    bokehHalf = side / 2;
+    var N = Math.max(4, C.BOKEH_COUNT || 24);
+    var posArr  = new Float32Array(N * 2);   /* disc centres in centred uv (-0.5..0.5 == whole plane) */
+    var radArr  = new Float32Array(N);       /* uv radius */
+    var colArr  = new Float32Array(N * 3);
+    var metaArr = new Float32Array(N * 4);   /* phase, drift speed X, drift speed Y, pulse rate */
+    var palette = C.BOKEH_PALETTE;
     for (var i = 0; i < N; i++) {
-      posArr[i * 2]     = Math.random();      /* centre across the plane (uv) */
-      posArr[i * 2 + 1] = Math.random();
-      var rLw = C.BOKEH_MIN_R + Math.random() * C.BOKEH_VAR_R;
-      radArr[i]         = rLw / side;         /* world units -> uv radius */
-      var warm = 1 - Math.random() * 0.55,     /* warm lamp light       */
-          cool = Math.random() * 0.45,         /* cooler accent         */
-          m    = 0.32 + Math.random() * 0.38;  /* overall glow intensity */
-      colArr[i * 3]     = m * (0.98 * warm + 0.04 * cool);
-      colArr[i * 3 + 1] = m * (0.86 * warm + 0.16 * cool);
-      colArr[i * 3 + 2] = m * (0.66 * warm + 0.42 * cool);
+      /* centred uv (-0.5..0.5): the fragment remaps vUv to a centred frame, so
+         positions in -1..1 would put ~half of all discs outside the plane
+         and the backdrop would read as a near-black field */
+      posArr[i * 2]     = Math.random() - 0.5;
+      posArr[i * 2 + 1] = Math.random() - 0.5;
+       var rLw = (C.BOKEH_MIN_R + Math.random() * (C.BOKEH_VAR_R || 150)) * (side / BOKEH_SIDE_REF);
+       radArr[i]         = rLw / side;        /* world units -> uv radius (constant on-screen size) */
+      var p = normColor(palette ? palette[i % palette.length] : null);
+      var m = 0.45 + Math.random() * 0.65;   /* per-disc brightness scale */
+      colArr[i * 3]     = p[0] * m;
+      colArr[i * 3 + 1] = p[1] * m;
+      colArr[i * 3 + 2] = p[2] * m;
+      var spd = (C.BOKEH_SPEED || 0.16) * (0.3 + Math.random() * 0.9);
+      metaArr[i * 4]     = Math.random() * Math.PI * 2;                        /* phase */
+      metaArr[i * 4 + 1] = spd * (Math.random() < 0.5 ? -1 : 1);              /* drift x (rad/s) */
+      metaArr[i * 4 + 2] = spd * (Math.random() < 0.5 ? -1 : 1);              /* drift y (rad/s) */
+      metaArr[i * 4 + 3] = 0.4 + Math.random() * 0.9;                          /* pulse rate (rad/s) */
     }
     var VS = "varying vec2 vUv; void main(){ vUv = uv; vec4 p = modelMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * viewMatrix * p; }";
+    /* Fragment: out-of-focus bokeh orbs — a bright core, a soft wide halo and a faint
+       rim, each tinted by its disc colour. Field transform: autonomous smooth pan
+       (uFlow) + very slow rotation (uRot) + parallax slide vs camera (uCamPar), so the
+       orbs read as light moving behind the table whenever the camera moves. */
     var fs = [
       "precision mediump float;",
       "uniform float uTime;",
+      "uniform float uFlow;  /* autonomous pan amplitude, uv */",
+      "uniform float uRot;   /* autonomous rotation (rad), driven per-frame in draw() */",
+      "uniform vec2 uCamPar; /* camera offset vs base frame, normalized to uv * parallax */",
+      "uniform float uDriftAmp;",
+      "uniform float uCore;",
+      "uniform float uHalo;",
+      "uniform float uRing;",
       "uniform vec2 uSpotPos[" + N + "];",
       "uniform float uSpotR[" + N + "];",
       "uniform vec3 uSpotCol[" + N + "];",
+      "uniform vec4 uSpotMeta[" + N + "];",
       "uniform vec3 uBg;",
+      "uniform float uOrbDebug; /* >0.5 in ?debug_bg=1: draws triage markers (red centre, yellow orb0) */",
       "varying vec2 vUv;",
       "void main() {",
+      "  /* move the sampling frame: slow pan, slow spin, then parallax against camera */",
       "  vec2 c = vUv - 0.5;",
+      "  c += vec2(sin(uTime * 0.07), cos(uTime * 0.056)) * uFlow;",
+      "  float cr = cos(uRot); float sr = sin(uRot);",
+      "  c = vec2(c.x * cr - c.y * sr, c.x * sr + c.y * cr);",
+      "  c += -uCamPar;",
       "  vec3 col = uBg;",
       "  for (int j = 0; j < " + N + "; j++) {",
-      "    float ox = sin(uTime * 0.13 + j * 2.4) * 0.045;",
-      "    float oy = cos(uTime * 0.11 + j * 3.1) * 0.045;",
-      "    vec2 d = c - (uSpotPos[j] - 0.5 + vec2(ox, oy));",
-      "    float rr = uSpotR[j] * (1.0 + 0.16 * sin(uTime * 0.7 + j * 1.9));",
+      "    float ph = uSpotMeta[j].x;",
+      "    vec2 drift = vec2(",
+      "        sin(uTime * uSpotMeta[j].y + ph) * uDriftAmp,",
+      "        cos(uTime * uSpotMeta[j].z + ph * 1.73) * uDriftAmp",
+      "    );",
+      "    vec2 p = uSpotPos[j] + drift;",
+      "    float rr = uSpotR[j] * (1.0 + 0.18 * sin(uTime * uSpotMeta[j].w + ph));",
+      "    vec2 d = c - p;",
       "    float t = length(d) / max(rr, 0.004);",
-      "    float core = exp(-t * t * 2.3);",
-      "    float halo = exp(-t * t * 0.85) * 0.3;",
-      "    float ring = exp(-pow(max(t - 1.05, 0.0) * 3.5, 2.0)) * 0.45;",
-      "    col += uSpotCol[j] * (core + halo + ring);",
+      "    float core = exp(-t * t * 2.6);",
+      "    float halo = exp(-t * t * 0.75);",
+      "    float ring = exp(-pow(t - 1.1, 2.0) * 4.0);",
+      "    col += uSpotCol[j] * (core * uCore + halo * uHalo + ring * uRing);",
       "  }",
-      "  col *= mix(1.0, 0.45, smoothstep(0.30, 1.0, length(c)));",
+      "  col *= mix(1.0, 0.42, smoothstep(0.45, 1.35, length(c)));",
+      "  if (uOrbDebug > 0.5) { /* triage: red = fragment executes (fixed centre); yellow = uSpotPos array uploaded */",
+      "    vec2 dc = c;",
+      "    if (length(dc) < 0.12) col = vec3(1.0, 0.0, 0.0);",
+      "    vec2 p0 = uSpotPos[0];",
+      "    if (length(dc - p0) < 0.05) col = vec3(1.0, 1.0, 0.0);",
+      "  }",
       "  gl_FragColor = vec4(col, 1.0);",
       "}"
     ];
@@ -237,22 +408,59 @@
       vertexShader: VS,
       fragmentShader: fs.join("\n"),
       uniforms: {
-        uTime:    { value: 0 },
-        uSpotPos: { value: posArr },
-        uSpotR:   { value: radArr },
-        uSpotCol: { value: colArr },
-        uBg:      { value: new THREE.Color(0x0a0c11) }
+        uTime:     { value: 0 },
+        uFlow:     { value: C.BOKEH_FLOW || 0.06 },
+        uRot:      { value: 0 },
+        uCamPar:   { value: new THREE.Vector2(0, 0) },
+        uDriftAmp: { value: C.BOKEH_DRIFT || 0.10 },
+         uCore:     { value: C.BOKEH_CORE_ALPHA || 1.0 },
+         uHalo:     { value: C.BOKEH_MID_ALPHA || 0.5 },
+         uRing:     { value: C.BOKEH_RING_ALPHA || 0.15 },
+        uSpotPos:  { value: posArr },
+        uSpotR:    { value: radArr },
+        uSpotCol:  { value: colArr },
+        uSpotMeta: { value: metaArr },
+         uBg:       { value: new THREE.Color(0x14233f) },
+         uOrbDebug: { value: DEBUG_BG ? 1 : 0 }
       },
       side: THREE.DoubleSide
     });
-    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(side, side), mat);
-    mesh.rotation.x = -Math.PI / 2;          /* flat, normal points +Y (overhead view) */
-    return { mesh: mesh, mat: mat };
+     var mesh = new THREE.Mesh(new THREE.PlaneGeometry(side, side), mat);
+     mesh.rotation.x = -Math.PI / 2;          /* flat, normal points +Y (overhead view) */
+     if (DEBUG_BG && console && console.info) {
+       console.info('[BG_DBG] step 2: bokeh N=' + N + ', col[0]=[' + colArr[0].toFixed(3) + ',' +
+         colArr[1].toFixed(3) + ',' + colArr[2].toFixed(3) + '], pos0=[' + posArr[0].toFixed(3) + ',' +
+         posArr[1].toFixed(3) + '], r0=' + radArr[0].toFixed(4) + ' uv');
+     }
+     return { mesh: mesh, mat: mat };
   }
 
   /* ---- scene building ---- */
-  function init(canvas) {
-    if (!window.THREE) return;
+   function init(canvas) {
+    /* triage (DEBUG_BG only): DOM banner + console line proving webgl3d.js executed and
+       init() started, before any GL work. If there is NOT a single "[BG_DBG]" line in the
+       F12 Console -> this script did not run at all (wrong folder / stale copy / an
+       earlier script error), so the black screen is not a shader issue. */
+    if (DEBUG_BG) {
+      var bgDom = W.document ? W.document.createElement('div') : null;
+      if (bgDom) {
+        bgDom.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999;pointer-events:none;' +
+          'background:#ff3d3d;color:#fff;font:bold 14px Arial,sans-serif;padding:7px 11px;' +
+          'box-shadow:0 2px 14px rgba(0,0,0,.65)';
+        bgDom.textContent = 'BG_DBG - webgl3d.js is running; open F12 > Console for steps 0-2';
+        W.document.body.appendChild(bgDom);
+      }
+      if (console && console.info) {
+        console.info('[BG_DBG] step 0: webgl3d.js ran (glint HEXFIX v2), init() started.');
+      }
+    }
+    /* Defensive duplicate of the module-level THREE check: on a normal load it can
+       never be reached here (module-level early-out + stub), but if it somehow is,
+       fail visibly instead of returning into a dead game loop. */
+    if (!window.THREE) {
+      showInitFail("WebGL rendering unavailable: THREE.js did not load.");
+      return;
+    }
     /* Idempotent: the #game canvas already holds one GL context after the first
        call, so a second init() must not try to create another (that throws with
        "Canvas has an existing context of a different type"). */
@@ -267,19 +475,28 @@
        provided, Three.js falls back to its own appended canvas. updateStyle:false
        keeps the canvas's CSS 100vw/100vh layout authoritative; only the GL buffer
        size changes so the scene stays crisp at the native resolution. */
-    var opts = { antialias: true };
-    if (canvas) opts.canvas = canvas;
-    renderer = new THREE.WebGLRenderer(opts);
-    renderer.setPixelRatio(Math.min(W.devicePixelRatio || 1, 2));
-    renderer.setSize(W.innerWidth, W.innerHeight, false);
+     try {
+       var opts = { antialias: true };
+       if (canvas) opts.canvas = canvas;
+       /* context creation is the only place GL capability actually surfaces. Before
+          this try/catch a dead context meant a raw console error and a black square
+          with no message for the user. */
+       renderer = new THREE.WebGLRenderer(opts);
+       renderer.setPixelRatio(Math.min(W.devicePixelRatio || 1, 2));
+       renderer.setSize(W.innerWidth, W.innerHeight, false);
+     } catch (e) {
+       if (console && console.error) console.error("webgl3d: WebGL context unavailable:", e);
+       showInitFail("WebGL is not available in this browser. Use a recent Chrome/Edge/Firefox/Safari with hardware acceleration enabled, then hard-reload (Ctrl+Shift+R).");
+       return;
+     }
     renderer.shadowMap.enabled = true;
     if (THREE.PCFSoftShadowType !== undefined) renderer.shadowMap.type = THREE.PCFSoftShadowType;
     else renderer.shadowMap.type = 1;
-    renderer.setClearColor(0x0b0e12, 1); /* plain dark background, unchanged */
+    renderer.setClearColor(0x14233f, 1); /* plain dark background, unchanged */
 
     scene = new THREE.Scene();
     /* dim room backdrop so the overhead frame has context (no empty black void) */
-    scene.background = new THREE.Color(0x0a0c11);
+    scene.background = new THREE.Color(0x14233f);
     camera = new THREE.PerspectiveCamera(FOV, W.innerWidth / W.innerHeight, 5, 3000);
     raycaster = new THREE.Raycaster();
     hitPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); /* raycast the felt surface (y = 0) so pointer aim maps onto the table, not the elevated ball-centre height */
@@ -332,11 +549,36 @@
        out-of-focus lights so the overhead frame reads as a real table room, not
        an empty void. Slightly larger than the felt+rails to fill the visible
        background; uTime is advanced in draw(). */
-    var bokehSide = (Math.max(C.IX1 - C.IX0, C.IY1 - C.IY0) + RAIL_DEPTH * 16) * 1.35;
+      /* 3.5x margin so the colored glint field clearly exceeds the framed view at
+         any window aspect ratio (check-bg-extent.js verified coverage up to ~3.5:1) */
+     var bokehSide = (Math.max(C.IX1 - C.IX0, C.IY1 - C.IY0) + RAIL_DEPTH * 16) * 3.5;
     var bh = makeBokehFloor(bokehSide);
     bh.mesh.position.set(0, legTopY - legLen - 5, 0); /* sits just under the legs */
     scene.add(bh.mesh);
     bokehMat = bh.mat;
+    bokehMesh = bh.mesh;
+    bokehMeshBasePos.copy(bokehMesh.position);
+    /* triage (DEBUG_BG only): a semi-transparent bright red quad in front of the glint
+       backdrop, 0xff1111 deliberately outside C.BOKEH_PALETTE. Purpose:
+       - red tint over the field -> renderer, camera/frustum and shader all work;
+       - still pure black -> problem is before this quad (GL context / frustum /
+         scene build), i.e. one of console steps 0/1 above failed. */
+    if (DEBUG_BG) {
+      var dbQuad = new THREE.Mesh(
+        new THREE.PlaneGeometry(bokehSide, bokehSide),
+        new THREE.MeshBasicMaterial({ color: 0xff1111, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false })
+      );
+      dbQuad.rotation.x = -Math.PI / 2;
+      /* 1.5 units in front of the backdrop plane (which sits at legTopY - legLen - 5), so no z-fight */
+       /* triage placement: the ?debug_bg=1 camera (L578-583) aims at z=860 on the
+          backdrop plane, so the quad sits at screen centre under that view
+          (frustum-check.js confirms NDC ~ (0,0) and the ray is not blocked by
+          the table). At z=0 the view ray would cross the felt top and this
+          marker would stay hidden behind the table. */
+       dbQuad.position.set(0, legTopY - legLen - 3.5, 860);
+      dbQuad.renderOrder = 45;
+      scene.add(dbQuad);
+    }
 
     /* raised rails hugging the felt edge */
     var sides = [];
@@ -427,8 +669,13 @@
        WebGLRenderer constructor throws if it can't obtain a context, so reaching
        this line means GL is available. Consumers gate on this instead of
        re-requesting (possibly type-mismatched) contexts from the canvas. */
-    glReady = !!renderer;
-  }
+      glReady = !!renderer;
+      /* triage (DEBUG_BG only): GL context + full scene build done; the backdrop plane,
+         foreground meshes and the red debug quad are in the scene now. */
+      if (DEBUG_BG && console && console.info) {
+        console.info('[BG_DBG] step 1: GL context ready, scene built (backdrop + red debug quad). Red tint over glints = renderer/camera/shader all OK.');
+      }
+    }
 
   /* ---- public API -------------------------------------------------------- */
   P.WebGL3D = {
@@ -438,7 +685,19 @@
     draw: function (state) {
       if (!renderer) return;
        var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-       if (bokehMat) bokehMat.uniforms.uTime.value = now * 0.001; /* animate backdrop */
+        if (bokehMat) {
+          /* time, slow autonomous rotation, and a parallax slide against the camera:
+             the colored field walks on its own behind the table and slides when the
+             view tilts or shakes */
+          var ut = now * 0.001;
+          bokehMat.uniforms.uTime.value = ut;
+          bokehMat.uniforms.uRot.value =
+            Math.sin(ut * C.BOKEH_ROT_SPEED) * (C.BOKEH_ROT_A || 0.03) +
+            Math.cos((ut * 1.41 * C.BOKEH_ROT_SPEED) + 1.37) * (C.BOKEH_ROT_B || 0.018);
+          var px = ((camera.position.x - baseCamPos.x) / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
+          var pz = ((camera.position.z - baseCamPos.z) / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
+          bokehMat.uniforms.uCamPar.value.set(px, pz);
+        }
 
       /* camera shake (decaying jitter around the framed base position) */
       var shake = 0;
@@ -447,10 +706,29 @@
         Math.sin(now * 0.13 + 1.7) * 6 * shake,
         Math.sin(now * 0.11 + 2.2) * 4 * shake,
         Math.sin(now * 0.17 + 0.4) * 6 * shake);
-      camera.position.copy(baseCamPos).add(camOffset);
-      camera.lookAt(0, RAIL_H * 0.2, 0);
+        camera.position.copy(baseCamPos).add(camOffset);
+        if (shake <= 0) {
+          /* keep the base orientation when not shaking so the backdrop stays put */
+          camera.lookAt(0, RAIL_H * 0.2, 0);
+        }
+        /* backdrop is a fixed room element: translate it by the same shake vector
+           as the camera so its on-screen position never changes while the table
+           jitters; freeze the parallax slide too. (Skipped in debug_bg mode where
+           the camera is overridden and not shaken.) */
+        if (!DEBUG_BG && bokehMesh && bokehMat) {
+          bokehMesh.position.copy(bokehMeshBasePos).add(camOffset);
+          if (shake > 0) bokehMat.uniforms.uCamPar.value.set(0, 0);
+        }
+       if (DEBUG_BG) {
+         /* debug only: stare down at the glint strip near the near rail so the
+            colored backdrop fills the frame and can be checked standalone */
+         var dbPos = new THREE.Vector3(0, 1350, 760);
+         camera.position.copy(dbPos);
+         camera.lookAt(new THREE.Vector3(0, -232.0, 860));
+       }
 
-      /* balls */
+       if (!DEBUG_BG) {
+         /* balls */
       if (state) {
         for (var i = 0; i < state.balls.length; i++) {
           var b = state.balls[i];
@@ -498,18 +776,28 @@
            targetMesh.visible = false;
          }
          targetRingMesh.visible = true;
-         var sl = C.CUE_STICK_LEN + power * C.CUE_MAX_EXTEND;
-         /* Lean-back cue pivoted on its nose: the tip rests at the ball edge on the
-            felt, and the butt end is pulled back along -dir and lifted so it reads as a
-            held stroke. The single group origin sits on that tip contact point and the
-            whole stick is laid out along one local axis, so changing aim rotates the
-            cue about the nose at the ball (not its own centre). Split 80/20 into a
-            light shaft and a darker ebony butt. */
-          var tp = nose;           /* stick pivots about the exact tip the aim line starts from */
-         var bEnd = new THREE.Vector3(
-           l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).x,
-           REST_Y + sl * 0.14,
-           l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).z);
+          /* On-screen-framed extension: the cue grows from its rest length toward the
+             furthest point that stays inside the frame in this aim direction. Power alone
+             drives the growth (never compression) and the full-power cue is always fully
+             visible, so it reads as "receding from the ball" in every orientation. */
+          var baseSl = C.CUE_STICK_LEN;
+          var sl = baseSl;
+          if (power > 0) {
+            var vw = renderer.domElement.width, vh = renderer.domElement.height;
+            var maxOff = _cueMaxOnScreenOff(dx, dy, cue.x, cue.y, baseSl, vw, vh);
+            sl = baseSl + power * (maxOff - baseSl);
+          }
+          /* Lean-back cue pivoted on its nose: the tip rests at the ball edge on the
+             felt, and the butt end is pulled back along -dir and lifted so it reads as a
+             held stroke. The single group origin sits on that tip contact point and the
+             whole stick is laid out along one local axis, so changing aim rotates the
+             cue about the nose at the ball (not its own centre). Split 80/20 into a
+             light shaft and a darker ebony butt. */
+           var tp = nose;
+          var bEnd = new THREE.Vector3(
+            l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).x,
+            REST_Y + sl * 0.14,
+            l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).z);
          var dirFromTip = new THREE.Vector3().subVectors(bEnd, tp);
          if (dirFromTip.lengthSq() < 1e-6) {
            cueGroup.visible = false;
@@ -543,9 +831,10 @@
         }
         ft.sprite.position.set(0, REST_Y + 20 + t * (C.MSG_RISE || 80), 0);
         ft.sprite.material.opacity = Math.max(0, (1 - t) * 0.95);
-      }
+       }
+       }
 
-      /* game-over centre card (DOM, pointer-events:none so clicks reach the canvas) */
+       /* game-over centre card (DOM, pointer-events:none so clicks reach the canvas) */
       if (goEl) {
         if (state && state.gameOver) {
           goEl.style.display = 'flex';
@@ -555,8 +844,15 @@
         }
       }
 
-      renderer.render(scene, camera);
-    },
+       renderer.render(scene, camera);
+      /* triage (DEBUG_BG only): proves a frame with the backdrop actually hit the screen. */
+      if (DEBUG_BG && !bgFirstFrame) {
+        bgFirstFrame = true;
+        if (console && console.info) {
+          console.info('[BG_DBG] step 2: first frame rendered. If still black, report all [BG_DBG] lines + any Console errors + the exact URL where index.html was opened.');
+        }
+      }
+     },
     pop: function (text, rgbStr) {
       if (!renderer || !scene) return;
       var cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
@@ -575,13 +871,19 @@
       scene.add(m);
       floats3d.push({ sprite: m, t0: (typeof performance !== 'undefined' ? performance.now() : Date.now()), life: C.FLASH_MS || 1800 });
     },
-    screenToTableLogical: function (px, py) {
+    screenToTableLogical: function (px, py, cx, cy) {
       /* px/py arrive as raw viewport coordinates; rebase them onto the canvas so
          aiming stays correct even when the canvas is not anchored at (0,0). */
       var r = P.UI && P.UI.canvas && P.UI.canvas.getBoundingClientRect
         ? P.UI.canvas.getBoundingClientRect() : null;
       if (r) { px -= r.left; py -= r.top; }
       var cssW = r ? r.width : W.innerWidth, cssH = r ? r.height : W.innerHeight;
+      /* When the caller supplies the cue ball's logical centre we use the
+         on-screen-offset mapping (immune to elevated-cursor distortion); otherwise
+         fall back to the plain raycast for compatibility. */
+      if (typeof cx === 'number' && typeof cy === 'number') {
+        return _aimFromScreen(px, py, cssW, cssH, cx, cy);
+      }
       return _screenToLogical(px, py, cssW, cssH);
     }
   };
