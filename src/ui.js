@@ -78,7 +78,9 @@
      cue where you point even when the cursor hovers over the elevated ball; the
      plain raycast is kept only for compatibility. Falls back to the flat 2D frame
      only before the 3D renderer owns the canvas. */
+  /* raw pointer pixels (client coords) — kept for optional on-screen aim debug. */
   function toLogical(e) {
+    P.UI.lastPtr = { x: e.clientX, y: e.clientY };
     var cx = state && state.cue ? state.cue.x : null;
     var cy = state && state.cue ? state.cue.y : null;
     var hit = null;

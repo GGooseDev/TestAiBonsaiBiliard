@@ -46,19 +46,25 @@
    C.POWER_MAX_DIST = 240;
   C.MIN_DRAG = 5;
 
-   /* cue stick visuals — the visible stick (tip to butt) rests at CUE_STICK_LEN so it never
-      reads as a stub, and is pulled further from the ball by CUE_MAX_EXTEND as power rises. */
-    C.CUE_STICK_LEN = 240;
-    /* Legacy world-unit extension cap, kept for reference. Cue length is now driven
-       by the on-screen-framed extension (_cueMaxOnScreenOff) so it reads the same
-       regardless of aim direction; this value no longer sets the maximum length. */
-    C.CUE_MAX_EXTEND = 160;
-    C.CUE_SHAFT_W = 7;
-    /* Cue extension is framed to stay inside the viewport: the butt end may reach at
-       most C.CUE_MAX_WORLD_OFF world units from the ball (bisection upper bound),
-       and stops C.CUE_SCREEN_INSET_FRAC of min(width,height) px short of the frame edge. */
-    C.CUE_MAX_WORLD_OFF = 1500;
-    C.CUE_SCREEN_INSET_FRAC = 0.04;
+    /* cue stick visuals — the visible stick (tip to butt) is a rigid body at rest length
+       CUE_STICK_LEN; as power rises it translates backward along the aim vector (recedes
+       from the ball) rather than stretching. Back-pull is limited to C.CUE_MAX_RECED
+       (half the stick, so the tip stays between the ball and the finger) and to on-screen
+       framing (_cueMaxOnScreenOff), so the butt end is never clipped. */
+     C.CUE_STICK_LEN = 240;
+     /* Max back-pull when charging: how far the cue translates behind the ball at full
+        power. Half a stick length keeps the tip between the cue ball and the pointer. */
+     C.CUE_MAX_RECED = C.CUE_STICK_LEN * 0.5;
+     /* Legacy world-unit extension cap, kept for reference only; the cue no longer
+        stretches, so this value does not set length or travel. */
+     C.CUE_MAX_EXTEND = 160;
+     C.CUE_SHAFT_W = 7;
+     /* Back-pull (recession) is framed to stay inside the viewport: the butt end may
+        reach at most C.CUE_MAX_WORLD_OFF world units from the ball (bisection upper
+        bound), and stops C.CUE_SCREEN_INSET_FRAC of min(width,height) px short of the
+        frame edge. */
+     C.CUE_MAX_WORLD_OFF = 1500;
+     C.CUE_SCREEN_INSET_FRAC = 0.04;
 
   /* effects */
   C.SHAKE_MS = 700;

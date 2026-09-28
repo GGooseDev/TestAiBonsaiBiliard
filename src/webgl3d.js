@@ -91,7 +91,7 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
      Used only for on-screen framing checks (is a point inside the viewport). */
   function _ptToCanvas(v, w, h) {
     var p = v.clone().project(camera);
-    return { x: (p.x + 1) * 0.5 * w, y: 1 - (p.y + 1) * 0.5 * h };
+    return { x: (p.x + 1) * 0.5 * w, y: (1 - p.y) * 0.5 * h };
   }
 
   /* Largest world offset s (>= baseSl) at which the cue butt end is still inside the
@@ -776,46 +776,82 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
            targetMesh.visible = false;
          }
          targetRingMesh.visible = true;
-          /* On-screen-framed extension: the cue grows from its rest length toward the
-             furthest point that stays inside the frame in this aim direction. Power alone
-             drives the growth (never compression) and the full-power cue is always fully
-             visible, so it reads as "receding from the ball" in every orientation. */
-          var baseSl = C.CUE_STICK_LEN;
-          var sl = baseSl;
-          if (power > 0) {
-            var vw = renderer.domElement.width, vh = renderer.domElement.height;
-            var maxOff = _cueMaxOnScreenOff(dx, dy, cue.x, cue.y, baseSl, vw, vh);
-            sl = baseSl + power * (maxOff - baseSl);
+                 /* Cue charging = rigid recede, not stretch: the stick keeps its constant rest
+          length (CUE_STICK_LEN) and translates backward along -dir as power rises — the
+          tip leaves ball contact and the whole cue moves away from the ball. Max back-
+          pull is capped by _cueMaxOnScreenOff so the butt end is always fully visible,
+          in every aim orientation (never clipped at the frame border). */
+       var SL = C.CUE_STICK_LEN;
+       var rec = 0;
+       if (power > 0) {
+         var vw = renderer.domElement.width, vh = renderer.domElement.height;
+         var maxOff = _cueMaxOnScreenOff(dx, dy, cue.x, cue.y, C.BR + SL, vw, vh);
+          var recMax = Math.max(0, maxOff - (C.BR + SL));
+          /* Cap back-pull at half a stick length so the tip stays between the ball and
+             the pointer; the on-screen cap (recMax) still prevents frame clipping. */
+          rec = power * Math.min(recMax, C.CUE_MAX_RECED);
+       }
+       /* Lean-back cue: rigid stick, group origin at the tip. The tip sits BR plus the
+          power-driven back-pull "rec" from the ball on -dir; the butt end is exactly
+          SL behind it and lifted so it reads as a held stroke. Changing aim rotates
+          the cue about the tip; changing power translates it backward without altering
+          its length. Split 80/20 into a light shaft and a darker ebony butt. */
+        var tp = l2w(cue.x - dx * (C.BR + rec), cue.y - dy * (C.BR + rec), REST_Y);
+       var buttOff = C.BR + rec + SL;
+       var bEnd = new THREE.Vector3(
+         l2w(cue.x - dx * buttOff, cue.y - dy * buttOff, REST_Y).x,
+         REST_Y + buttOff * 0.14,
+         l2w(cue.x - dx * buttOff, cue.y - dy * buttOff, REST_Y).z);
+      var dirFromTip = new THREE.Vector3().subVectors(bEnd, tp);
+      if (dirFromTip.lengthSq() < 1e-6) {
+        cueGroup.visible = false;
+      } else {
+        cueGroup.visible = true;
+        cueGroup.position.copy(tp);
+         cueGroup.quaternion.setFromUnitVectors(UP, dirFromTip.normalize());
+        var shaftLen = SL * 0.8;
+        shaftMesh.position.set(0, shaftLen * 0.5, 0);
+        shaftMesh.quaternion.identity();
+        shaftMesh.scale.set(C.CUE_SHAFT_W * 0.5, shaftLen, C.CUE_SHAFT_W * 0.5);
+        var buttLen = SL - shaftLen;
+        buttMesh.position.set(0, shaftLen + buttLen * 0.5, 0);
+        buttMesh.quaternion.identity();
+         buttMesh.scale.set(C.CUE_SHAFT_W * 0.65, buttLen, C.CUE_SHAFT_W * 0.65);
+       }
+
+
+        /* Optional on-screen aim debug: while aiming, log the cursor's screen angle
+           vs the cue tip's screen angle (both relative to the projected ball centre).
+           Enable in the browser console with P.DEBUG_AIM_LOG = true, then aim.
+           Off by default; never affects gameplay. */
+        if (P.DEBUG_AIM_LOG) {
+          var _dbgNow = performance.now();
+          if (!P._aimLogT || _dbgNow - P._aimLogT > 120) {
+            P._aimLogT = _dbgNow;
+            var _r = P.UI.canvas && P.UI.canvas.getBoundingClientRect
+                ? P.UI.canvas.getBoundingClientRect() : null;
+            var _cw = _r ? _r.width : (renderer.domElement.clientWidth || 1);
+            var _ch = _r ? _r.height : (renderer.domElement.clientHeight || 1);
+            var _bScr = _ptToCanvas(l2w(cue.x, cue.y, REST_Y), _cw, _ch);
+            var _tScr = _ptToCanvas(l2w(tipX, tipY, REST_Y), _cw, _ch);
+            var _pcx = P.UI.lastPtr ? P.UI.lastPtr.x - (_r ? _r.left : 0) : 0;
+            var _pcy = P.UI.lastPtr ? P.UI.lastPtr.y - (_r ? _r.top : 0) : 0;
+            var _curA = Math.atan2(_pcy - _bScr.y, _pcx - _bScr.x);
+            var _tipA = Math.atan2(_tScr.y - _bScr.y, _tScr.x - _bScr.x);
+            var _diff = (_tipA - _curA + Math.PI) % (Math.PI * 2) - Math.PI;
+            var _d = function (x) { return (x * 180 / Math.PI).toFixed(1); };
+            console.log('[AIMDBG]', JSON.stringify({
+              ballScr: [+_bScr.x.toFixed(1), +_bScr.y.toFixed(1)],
+              cursorScr: [+(_pcx).toFixed(1), +(_pcy).toFixed(1)],
+              tipScr: [+(_tScr.x.toFixed(1)), +(_tScr.y.toFixed(1))],
+              aimLogical: [+(aimX).toFixed(1), +(aimY).toFixed(1)],
+              cueLogical: [+(cue.x).toFixed(1), +(cue.y).toFixed(1)],
+              cursorDeg: _d(_curA), tipDeg: _d(_tipA), diffDeg: _d(_diff)
+            }));
           }
-          /* Lean-back cue pivoted on its nose: the tip rests at the ball edge on the
-             felt, and the butt end is pulled back along -dir and lifted so it reads as a
-             held stroke. The single group origin sits on that tip contact point and the
-             whole stick is laid out along one local axis, so changing aim rotates the
-             cue about the nose at the ball (not its own centre). Split 80/20 into a
-             light shaft and a darker ebony butt. */
-           var tp = nose;
-          var bEnd = new THREE.Vector3(
-            l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).x,
-            REST_Y + sl * 0.14,
-            l2w(cue.x - dx * sl, cue.y - dy * sl, REST_Y).z);
-         var dirFromTip = new THREE.Vector3().subVectors(bEnd, tp);
-         if (dirFromTip.lengthSq() < 1e-6) {
-           cueGroup.visible = false;
-         } else {
-           cueGroup.visible = true;
-           cueGroup.position.copy(tp);
-            cueGroup.quaternion.setFromUnitVectors(UP, dirFromTip.normalize());
-           var shaftLen = sl * 0.8;
-           shaftMesh.position.set(0, shaftLen * 0.5, 0);
-           shaftMesh.quaternion.identity();
-           shaftMesh.scale.set(C.CUE_SHAFT_W * 0.5, shaftLen, C.CUE_SHAFT_W * 0.5);
-           var buttLen = sl - shaftLen;
-           buttMesh.position.set(0, shaftLen + buttLen * 0.5, 0);
-           buttMesh.quaternion.identity();
-           buttMesh.scale.set(C.CUE_SHAFT_W * 0.65, buttLen, C.CUE_SHAFT_W * 0.65);
-         }
-       } else {
-         aimLineMesh.visible = false; targetMesh.visible = false; targetRingMesh.visible = false;
+        }
+        } else {
+          aimLineMesh.visible = false; targetMesh.visible = false; targetRingMesh.visible = false;
          cueGroup.visible = false;
        }
 
