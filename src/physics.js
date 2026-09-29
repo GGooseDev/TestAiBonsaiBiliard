@@ -43,6 +43,7 @@
     integrateStep: function (dt) {
        var balls = this.balls;
        var railPulse = 0;   /* max impact speed at a rail during this step (measured pre-reflect) */
+       var maxBallRV = 0;   /* max relative-normal velocity among ball-ball contacts this step */
 
        for (var i = 0; i < balls.length; i++) {
         var b = balls[i];
@@ -84,9 +85,12 @@
 
        /* Normalize this step's max rail impact speed to a 0..1 shake strength.
           Zero when no rail was struck; consumed (and reset) by P.Game.tick(). */
-       this.railImpulse = railPulse > 0
-         ? Math.min(1, railPulse / (C.MAX_SHOT_SPEED * 0.35))
-         : 0;
+        this.railImpulse = railPulse > 0
+          ? Math.min(1, railPulse / (C.MAX_SHOT_SPEED * 0.35))
+          : 0;
+
+        /* Cushion thud: scale by the same normalized impact intensity as shake. */
+        if (P.Sound && this.railImpulse >= 0.12) P.Sound.play("rail", this.railImpulse);
 
        /* ball-ball contacts over several passes so tight groups separate cleanly */
       for (var pass = 0; pass < C.COLLIDE_PASSES; pass++) {
@@ -113,6 +117,7 @@
 
             var rv = (A.vx - B.vx) * nx + (A.vy - B.vy) * ny;
             if (rv > 0) {
+              if (rv > maxBallRV) maxBallRV = rv;   /* loudest contact drives the clack */
               /* Equal-mass impulse per ball: (1 + e) * rv / 2. The missing half
                  was injecting ~4x energy at every contact, so the cue died on
                  impact while object balls flew off at up to 1.9x speed. */
@@ -124,6 +129,10 @@
         }
         if (!changed) break;
       }
+
+      /* Ball-ball clack: one sound per step at the loudest contact intensity. */
+      var bi = maxBallRV > 0 ? Math.min(1, maxBallRV / (C.MAX_SHOT_SPEED * 0.25)) : 0;
+      if (P.Sound && bi >= 0.1) P.Sound.play("ballball", bi);
     },
 
     /* Move a ball to its pocket and record it for rules. */
@@ -134,6 +143,8 @@
       } else {
         this.pocketedThisShot.push({ id: b.id });
       }
+      /* Pocket "plop": louder when the ball is still moving fast on capture. */
+      if (P.Sound) P.Sound.play("pocket", Math.min(1, P.Vec.hypot(b.vx, b.vy) / (C.MAX_SHOT_SPEED * 0.35)));
     },
 
     /* Place a pocketed ball back in play at (x,y) and nudge it clear of others. */

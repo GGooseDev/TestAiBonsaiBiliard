@@ -77,7 +77,7 @@
      }
      var total = C.CUE_STRIKE_FRAMES || 12;
      P.Physics.resetShot();
-     state.strike = { vx: shot.vx, vy: shot.vy, dx: dx, dy: dy, rec0: rec0, total: total, left: total };
+      state.strike = { vx: shot.vx, vy: shot.vy, dx: dx, dy: dy, rec0: rec0, total: total, left: total, power: pwr };
      P.UI.shootable = false;
      P.UI.aiming = false;
      state.shotInFlight = true;
@@ -149,6 +149,8 @@
       state.winner = P.Rules.players[D.winner];
       state.message = (state.winner ? state.winner.name : "?") + " wins! Click to play again.";
       popFloat(state.winner.name + " WINS!", "170, 245, 120");
+      /* victory/defeat fanfare, from the human's perspective */
+      if (P.Sound) P.Sound.play(D.winner === HUMAN_IDX ? "win" : "loss", 1);
       P.UI.shootable = false;
       P.UI.aiming = false;
       P.UI.botAiming = false;
@@ -318,6 +320,8 @@
         state.cue.vx = st.vx;
         state.cue.vy = st.vy;
         state.strike = null;
+        /* cue-stick "thock" at the instant of contact, scaled by shot power */
+        if (P.Sound) P.Sound.play("strike", st.power || 1);
       } else {
         return;   /* no ball physics yet — the cue is still swinging */
       }
