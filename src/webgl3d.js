@@ -45,7 +45,7 @@
      the console on every page load and stamped into the #dbg-version corner label so
      it is visible even without devtools. Compare against this string after reloads
      to see if the browser actually executed THIS file copy. */
-   var WEBGL3D_VERSION = '20260929-aimdash';
+    var WEBGL3D_VERSION = '20260929-feltbig';
   console.log('[WEBGL3D] loaded v' + WEBGL3D_VERSION + ' @' + new Date().toISOString());
   if (typeof document !== 'undefined') {
     var _dbgEl = document.getElementById('dbg-version');
@@ -567,7 +567,34 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     HALF_W = (C.IX1 - C.IX0) / 2; HALF_H = (C.IY1 - C.IY0) / 2;
     CXw = C.IX0 + HALF_W; CYw = C.IY0 + HALF_H;
 
-    var feltMat = new THREE.MeshStandardMaterial({ color: 0x346941, roughness: 1 });
+    /* Felt albedo: paint P.Noise.sampleFelt into a square canvas, then tile it over the
+       felt slab. The grain is period-1 in (u,v), so RepeatWrapping shows no seams;
+       repeat 2x1 (scaled up from 4x2) keeps it isotropic across the 932x492 felt; grain ~2x bigger (~5 u). */
+    function makeFeltTexture() {
+      var S = 256;
+      var cv = W.document.createElement('canvas');
+      cv.width = cv.height = S;
+      var ctx = cv.getContext('2d');
+      var img = ctx.createImageData(S, S);
+      var d = img.data;
+      for (var py = 0; py < S; py++) {
+        for (var px = 0; px < S; px++) {
+          var c = P.Noise.sampleFelt(px / S, py / S);
+          var o = (py * S + px) * 4;
+          d[o] = c.r; d[o + 1] = c.g; d[o + 2] = c.b; d[o + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      var tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 1);
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    /* texture carries the felt's own green tint, so colour is left white to pass it through */
+    var feltMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeFeltTexture(), roughness: 0.95 });
     var railMat = new THREE.MeshStandardMaterial({ color: 0x6e3b1e, roughness: 0.55 });
     var cabMat = new THREE.MeshStandardMaterial({ color: 0x52341d, roughness: 0.7 });
 

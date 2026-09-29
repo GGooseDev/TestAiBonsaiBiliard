@@ -8,24 +8,29 @@ Update on every chunk. Never mark `done` without a passing command or in-browser
 - No history, no "Done" section, no stale options — stale entries bloat context/cache.
 
 ## Active (in progress)
-- Aim trajectory look: geometry was already correct (verified via [AIMDBG] logs: line starts on the
-  cue-ball front surface `cue.x + dx*C.BR` and ends at the struck ball's near-surface first-contact
-  point), but it read as one solid rod passing through the white ball because the yellow cylinder is
-  collinear with the cue stick, the ball is only ~14px on screen, and while charging the stick tip
-  recedes from the ball. Fix: render the trajectory as a DASHED line — `aimLineMesh` replaced by a
-  `THREE.Line` + `LineBasicMaterial(0xffe86b)` built per frame by `setAimDash(a, b)` into world-space
-  dash segments (`C.AIM_DASH=9` / `C.AIM_GAP=6` world units); start still at the ball surface, end
-  unchanged; solid cylinder mesh and `orientAlong()` helper removed.
-  - Files: `src/webgl3d.js` (version marker -> `20260929-aimdash`; `setAimDash()` helper; aimLineMesh
-    creation ~line 682; draw() aim block call site ~line 821); `src/config.js` (+`C.AIM_DASH`,
-    `C.AIM_GAP`); `index.html` (cache-buster `?v=20260929b`).
-  - Verified headless: `node --check src/webgl3d.js` OK; `node smoke-e2e.js` -> all [OK];
-    dash-builder sanity check (long line: dashes from t=0 to full length, short line: one dash,
-    zero length: fallback) OK. No `orientAlong` references remain in code. Rendering-only change —
-    no headless WebGL check exists; needs user in-browser confirmation.
+- Felt covering texture generated procedurally with mathematical noise (no image assets). New
+  pure-math module `src/noise.js` exposes `P.Noise.sampleFelt(u,v)`: seeded mulberry32 PRNG +
+  seamless period-1 2D value noise, fBm over two layers (broad dye mottle freqs [3,5]; wool-pile
+  grain freqs now [32,64,96] for chunkier speckles), mapped to the old flat `0x346941` tint. In
+  `src/webgl3d.js`, `makeFeltTexture()` paints it into a 256x256 canvas -> `THREE.CanvasTexture`
+  with `RepeatWrapping` + `repeat(2,1)` (scaled up from 4x2, ~5 logical-unit grain across the
+  932x492 felt; no seams because noise is period-1). Contrast raised: brightness factor
+  `(0.82+0.36*m)*(0.94+0.12*g)` (mean stays ~1.0, wider tonal range). Felt material `{color:
+  0xffffff, map:feltTex, roughness:0.95}` so the texture's own green shows through; ball shadows
+  still land on it.
+  - Files: `src/noise.js` (grain freqs -> [32,64,96], k formula widened); `src/webgl3d.js`
+    (`WEBGL3D_VERSION` -> `20260929-feltbig`; `tex.repeat.set(2,1)` ~line 591; feltMat -> `map`);
+    `index.html` (cache-buster now `?v=20260929e`).
+  - Verified headless: `node --check src/webgl3d.js` OK; `node _test_felt_noise.js` ->
+    PASS=13696 FAIL=0 (range [0,255] integers, period-1 seamlessness on x and y, determinism,
+    value noise in [0,1]). Earlier browser bug (`createImageData(S,S,4)` -> "not of type
+    ImageDataSettings") fixed by dropping the stray `,4`. Needs user in-browser confirmation.
 
 ## User confirmation (needed)
-- After a no-line report: `src/config.js` had no cache-buster and was likely served from browser cache without the new `C.AIM_DASH`/`C.AIM_GAP` constants → dash coords NaN → invisible line. Added `?v=20260929b` to config.js too (index.html). User must hard-reload; corner label must say `webgl3d 20260929-aimdash`. If still no line, send any red F12 console errors.
+- Hard-reload (Ctrl+Shift+R) to fetch `?v=20260929e`; corner label must read `webgl3d
+  20260929-feltbig`. Felt should now show clearly larger, more visible speckled grain. If it's
+  still too subtle or looks wrong (seams, too coarse/fine, too dark/bright) or any error remains,
+  send the red F12 console errors and what you see.
 
 ## Notes
 - Headless only: visual changes stay "fixed-in-code" until the user confirms.
