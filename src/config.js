@@ -59,6 +59,7 @@
      /* Max back-pull when charging: how far the cue translates behind the ball at full
         power. Half a stick length keeps the tip between the cue ball and the pointer. */
      C.CUE_MAX_RECED = C.CUE_STICK_LEN * 0.5;
+      C.CUE_STRIKE_FRAMES = 12;  /* cue-strike swing: fixed physics steps before the shot velocity is applied (≈ display frames) */
      /* Legacy world-unit extension cap, kept for reference only; the cue no longer
         stretches, so this value does not set length or travel. */
      C.CUE_MAX_EXTEND = 160;

@@ -44,6 +44,7 @@
       cue: cue,
       players: players,   /* also owned by P.Rules via init() (same reference) */
       shotInFlight: false,
+      strike: null,            /* in-progress cue-strike swing (null when idle or already moving) */
       phase: "break",
       message: "Break the rack - drag from the cue.",
       shakeUntil: -9e9,    /* screen-shake deadline (ms), read by WebGL3D draw */
@@ -52,8 +53,35 @@
     };
   }
 
-  /* Read accessor for render. Identity only changes on newGame(). */
-  P.State = function () { return state; };
+   /* Read accessor for render. Identity only changes on newGame(). */
+   P.State = function () { return state; };
+
+   /* Begin the cue-strike swing for a shot that is about to fire. The stick animates
+      over C.CUE_STRIKE_FRAMES physics steps before the velocity is actually applied,
+      so both human and bot shots show the tip whipping into contact. rec0 matches the
+      retraction already drawn during aiming (via P.WebGL3D.cueStickRec) to avoid a pop. */
+   function beginStrike(shot) {
+     if (!state || state.gameOver) return;
+     var dx = shot.vx, dy = shot.vy;
+     var mag = Math.sqrt(dx * dx + dy * dy);
+     if (!(mag > 1e-6)) { dx = 1; dy = 0; mag = 1; }
+     dx /= mag; dy /= mag;
+     var pwr = (typeof shot.power === "number" && shot.power > 0)
+       ? shot.power
+       : (typeof P.UI.power === "number" && P.UI.power > 0 ? P.UI.power : 0.5);
+     var rec0;
+     if (typeof P.WebGL3D !== "undefined" && typeof P.WebGL3D.cueStickRec === "function") {
+       rec0 = P.WebGL3D.cueStickRec(dx, dy, state.cue.x, state.cue.y, pwr);
+     } else {
+       rec0 = pwr * (C.CUE_MAX_RECED || 120);
+     }
+     var total = C.CUE_STRIKE_FRAMES || 12;
+     P.Physics.resetShot();
+     state.strike = { vx: shot.vx, vy: shot.vy, dx: dx, dy: dy, rec0: rec0, total: total, left: total };
+     P.UI.shootable = false;
+     P.UI.aiming = false;
+     state.shotInFlight = true;
+   }
 
   function newGame() {
     clearBotTimer();
@@ -74,12 +102,7 @@
   /* A shot finished by the human (from P.UI). */
   function onHumanFire(shot) {
     if (!state || state.gameOver || !P.UI.shootable) return;
-    P.Physics.resetShot();
-    state.cue.vx = shot.vx;
-    state.cue.vy = shot.vy;
-    P.UI.shootable = false;
-    P.UI.aiming = false;
-    state.shotInFlight = true;
+    beginStrike(shot);
   }
 
   /* Rising 3D float sprite over the table + screen shake (the monolith look).
@@ -182,18 +205,14 @@
   function fireBotShot() {
     if (!state || state.gameOver || P.UI.shootable) return;
     P.UI.botAiming = false;          /* ball is now in motion; stop the aim preview */
-    P.Physics.resetShot();
     var legal = P.Rules.legalIds();            /* from the shared ball list */
     var shot = P.Bot.bestShot(state.balls, state.cue, legal);
     if (!shot) {                               /* no clear shot: a modest random knock (may foul, by design) */
       var a = Math.random() * Math.PI * 2;
       shot = { vx: Math.cos(a) * C.MAX_SHOT_SPEED * 0.4, vy: Math.sin(a) * C.MAX_SHOT_SPEED * 0.4, power: 0.4 };
     }
-    state.cue.vx = shot.vx;
-    state.cue.vy = shot.vy;
-    state.shotInFlight = true;
-    P.UI.shootable = false;
     state.message = "Bot is taking their shot...";
+    beginStrike(shot);
   }
 
   /* HUD (DOM owned by the game, not the UI module). */
@@ -287,6 +306,22 @@
   function tick() {
     rafId = requestAnimationFrame(tick);
     if (!state) return;
+
+    /* Cue-strike swing: animate the cue before any ball motion and skip physics until
+       the stick finishes its whip into contact. shotInFlight is set up front so every
+       driver (browser rAF, headless tick loops) keeps pumping frames during the swing. */
+    if (state.strike) {
+      P.WebGL3D.draw(state);
+      state.strike.left -= 1;
+      if (state.strike.left <= 0) {
+        var st = state.strike;
+        state.cue.vx = st.vx;
+        state.cue.vy = st.vy;
+        state.strike = null;
+      } else {
+        return;   /* no ball physics yet — the cue is still swinging */
+      }
+    }
 
     /* only advance physics while a shot is in flight; never after game over.
        WebGL3D.draw() runs every frame and handles both the active table and the

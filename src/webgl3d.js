@@ -763,6 +763,17 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     ok: function() { return glReady; },           /* did init secure a real GL context? */
     init: function (canvas) { init(canvas); },
     resize: function (w, h) { if (!renderer) return; renderer.setSize(w, h, false); frameCamera(w, h); },
+    cueStickRec: function (dx, dy, cx, cy, power) {
+      /* Current cue retraction (tip offset beyond C.BR) for a normalized direction + power,
+         identical to what draw() computes so a strike starts from the exact on-screen pull. */
+      if (!power || power <= 0) return 0;
+      var vw = renderer ? renderer.domElement.width : 0;
+      var vh = renderer ? renderer.domElement.height : 0;
+      if (!vw || !vh) return power * (C.CUE_MAX_RECED || 120);
+      var maxOff = _cueMaxOnScreenOff(dx, dy, cx, cy, C.BR + C.CUE_STICK_LEN, vw, vh);
+      var recMax = Math.max(0, maxOff - (C.BR + C.CUE_STICK_LEN));
+      return power * Math.min(recMax, C.CUE_MAX_RECED);
+    },
     draw: function (state) {
       if (!renderer) return;
        var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -822,15 +833,19 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
        }
 
       /* aim line + stick (only while aiming, hide during flight / game over) */
-      var wantAim = false, aimX = 0, aimY = 0, power = 0;
-      if (state && state.cue) {
-        if (P.UI && P.UI.aiming && !P.UI.botAiming) { wantAim = true; aimX = P.UI.aimX; aimY = P.UI.aimY; power = P.UI.power || 0; }
-        else if (P.UI && P.UI.botAiming) { wantAim = true; aimX = P.UI.botAimX; aimY = P.UI.botAimY; power = P.UI.botPower || 0; }
-      }
+       var wantAim = false, aimX = 0, aimY = 0, power = 0;
+       if (state && state.cue) {
+         if (P.UI && P.UI.aiming && !P.UI.botAiming) { wantAim = true; aimX = P.UI.aimX; aimY = P.UI.aimY; power = P.UI.power || 0; }
+         else if (P.UI && P.UI.botAiming) { wantAim = true; aimX = P.UI.botAimX; aimY = P.UI.botAimY; power = P.UI.botPower || 0; }
+       }
+       /* During the cue-strike swing the stick animates even though no aim preview is active. */
+       var strike = state ? state.strike : null;
+       if (!wantAim && strike) { wantAim = true; }
       if (wantAim && state.cue) {
         var cue = state.cue;
-        var dx = -(aimX - cue.x), dy = -(aimY - cue.y);
-        var dlen = Math.sqrt(dx * dx + dy * dy) || 1; dx /= dlen; dy /= dlen;
+         var dx = -(aimX - cue.x), dy = -(aimY - cue.y);
+         if (strike) { dx = strike.dx; dy = strike.dy; }
+         var dlen = Math.sqrt(dx * dx + dy * dy) || 1; dx /= dlen; dy /= dlen;
            /* point BR behind the ball centre along the shot direction (cue side);
               kept for the optional [AIMDBG] pointer-vs-tip angle log only */
            var tipX = cue.x - dx * C.BR, tipY = cue.y - dy * C.BR;
@@ -859,14 +874,21 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
            targetMesh.visible = false;
          }
          targetRingMesh.visible = true;
+         if (strike) { aimLineMesh.visible = false; targetMesh.visible = false; targetRingMesh.visible = false; }
                  /* Cue charging = rigid recede, not stretch: the stick keeps its constant rest
           length (CUE_STICK_LEN) and translates backward along -dir as power rises — the
           tip leaves ball contact and the whole cue moves away from the ball. Max back-
           pull is capped by _cueMaxOnScreenOff so the butt end is always fully visible,
           in every aim orientation (never clipped at the frame border). */
        var SL = C.CUE_STICK_LEN;
-       var rec = 0;
-       if (power > 0) {
+        var rec = 0;
+        if (strike) {
+          /* Ease-in quadratic: accelerates into contact so the tip reaches rec=0 on the final frame. */
+          var f = (strike.total - strike.left) / (strike.total - 1);
+          if (f < 0) f = 0;
+          if (f > 1) f = 1;
+          rec = strike.rec0 * (1 - f * f);
+        } else if (power > 0) {
          var vw = renderer.domElement.width, vh = renderer.domElement.height;
          var maxOff = _cueMaxOnScreenOff(dx, dy, cue.x, cue.y, C.BR + SL, vw, vh);
           var recMax = Math.max(0, maxOff - (C.BR + SL));
