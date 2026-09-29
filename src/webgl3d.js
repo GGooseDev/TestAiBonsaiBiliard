@@ -41,6 +41,16 @@
   }
 
   var C = P.CONFIG;
+  /* LOAD MARKER (temporary debug, remove once aiming is confirmed fixed): printed to
+     the console on every page load and stamped into the #dbg-version corner label so
+     it is visible even without devtools. Compare against this string after reloads
+     to see if the browser actually executed THIS file copy. */
+   var WEBGL3D_VERSION = '20260929-aimdash';
+  console.log('[WEBGL3D] loaded v' + WEBGL3D_VERSION + ' @' + new Date().toISOString());
+  if (typeof document !== 'undefined') {
+    var _dbgEl = document.getElementById('dbg-version');
+    if (_dbgEl) _dbgEl.textContent = 'webgl3d ' + WEBGL3D_VERSION;
+  }
   var renderer = null, scene = null, camera = null;
   var raycaster = null, hitPlane = null;
   var hitVec = new THREE.Vector3();
@@ -49,8 +59,14 @@
   var ndc = new THREE.Vector2();
   var UP = new THREE.Vector3(0, 1, 0); /* shared unit-up for setFromUnitVectors (never mutated) */
 
-  var ballsById = {};
-  var cueGroup = null,
+   var ballsById = {};
+   /* per-ball rolling state (rendering only): world orientation quaternion and last
+      rendered logical position; identity reset on teleport via C.BALL_ROT_RESET_DIST. */
+   var _ballQuats = {};
+   var _ballPrev = {};
+   var _qDelta = new THREE.Quaternion();
+   var _axisWorld = new THREE.Vector3();
+   var cueGroup = null,
       aimLineMesh = null, targetMesh = null, targetRingMesh = null,
       shaftMesh = null, buttMesh = null;
   var bokehMat = null;          /* animated colored-glint backdrop shader (set in init) */
@@ -192,27 +208,35 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     if (!bestB) return { ball: null };
     /* point on the ray nearest the struck centre, then back along its normal to
        the exact contact point on the ball surface */
-    var rx = bestB.x - cx - bestT * dx;
-    var ry = bestB.y - cy - bestT * dy;
-    var rl = Math.sqrt(rx * rx + ry * ry) || 1;
-    return {
-      ball: bestB,
-      impactX: bestB.x - R * (rx / rl),
-      impactY: bestB.y - R * (ry / rl)
-    };
+      var rx = bestB.x - cx - bestT * dx;
+      var ry = bestB.y - cy - bestT * dy;
+      var rl = Math.sqrt(rx * rx + ry * ry) || 1;
+      /* contact point on the struck ball's own surface (one BR back from its centre,
+         not R=2BR — that lands on the cue ball's contact position instead) */
+      return {
+        ball: bestB,
+        impactX: bestB.x - C.BR * (rx / rl),
+        impactY: bestB.y - C.BR * (ry / rl)
+      };
   }
 
-  /* orient a unit-axis cylinder (height along local +Y) so it lies on a->b.
-     X and Z get the radius; Y gets the full length. Scale.y = length is what makes
-     the object read as a rod along its axis instead of a sideways stub. */
-  function orientAlong(mesh, a, b, radius) {
-    var v = new THREE.Vector3().subVectors(b, a);
-    var len = v.length();
-    if (len < 0.001) { mesh.scale.set(radius, 1, radius); mesh.position.copy(a); return; }
-    var u = v.normalize();
-    mesh.position.copy(a).add(v).multiplyScalar(0.5);
-    mesh.quaternion.setFromUnitVectors(UP, u);
-    mesh.scale.set(radius, len, radius);
+  /* build the aim trajectory as dashed world-space segments so it reads as a guide
+     anchored to the cue ball surface, clearly separated from the solid cue stick. */
+  function setAimDash(a, b) {
+    var ab = new THREE.Vector3().subVectors(b, a);
+    var len = ab.length();
+    var u = len > 0.01 ? ab.normalize() : new THREE.Vector3(1, 0, 0);
+    var p0 = new THREE.Vector3(), p1 = new THREE.Vector3();
+    var pts = [];
+    for (var t = 0; t < len; t += C.AIM_DASH + C.AIM_GAP) {
+      var e = Math.min(t + C.AIM_DASH, len);
+      if (e <= t) break;
+       p0.copy(a).addScaledVector(u, t); pts.push(p0.clone());
+       p1.copy(a).addScaledVector(u, e);   pts.push(p1.clone());
+    }
+    if (pts.length === 0) { pts = [a, b]; }
+    aimLineMesh.geometry.dispose();
+    aimLineMesh.geometry = new THREE.BufferGeometry().setFromPoints(pts);
   }
 
   /* fit the camera so the felt + raised rail always fill the frame with margin.
@@ -233,10 +257,36 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       D * Math.sin(THREE.MathUtils.degToRad(TILT_DEG))
     );
     scene.add(camera);
-    camera.lookAt(0, RAIL_H * 0.2, 0);
+       camera.lookAt(0, RAIL_H * 0.2, 0);
+   }
+
+  /* integrate no-slip rolling spin for one ball from its per-frame logical
+     displacement. Spin axis is up x dir in world space, which is (-dy, 0, -dx) since
+     l2w maps logical y to negative world z; angle is path length over radius BR.
+     Orientation accumulates in world space (delta pre-multiplied). A jump larger than
+     C.BALL_ROT_RESET_DIST (respot / newGame) resets the ball to identity so a fresh
+     placement never inherits stale spin or whips around on screen. */
+  function _updateBallSpin(b, m) {
+    var prev = _ballPrev[b.id];
+    _ballPrev[b.id] = { x: b.x, y: b.y };
+    if (b.inPocket || !prev) return;
+
+    var q = _ballQuats[b.id];
+    if (!q) { q = new THREE.Quaternion(); _ballQuats[b.id] = q; }
+
+    var dsx = b.x - prev.x, dsy = b.y - prev.y;
+    var ds = Math.sqrt(dsx * dsx + dsy * dsy);
+    if (ds > C.BALL_ROT_RESET_DIST) {
+      q.set(0, 0, 0, 1); /* teleport: re-orient, no inherited spin */
+    } else if (ds > 1e-6) {
+      _axisWorld.set(-dsy, 0, -dsx).normalize();
+      _qDelta.setFromAxisAngle(_axisWorld, ds / C.BR);
+      q.copy(_qDelta.multiply(q)).normalize(); /* world-space: delta applied after */
+    }
+    m.quaternion.copy(q);
   }
 
-  /* ball surface texture: number printed on the TOP POLE so it stays readable
+   /* ball surface texture: number printed on the TOP POLE so it stays readable
      from the 3/4 view; equator band for stripes; 5 dots on the 8-ball. */
   var texCache = {};
   function makeBallTexture(id) {
@@ -628,7 +678,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     var unitCyl = new THREE.CylinderGeometry(1, 1, 1, 24);
     /* aim line is a UI overlay: never let the scene occlude it (see I2), so depthTest is
        off. depthWrite stays off so the guide cannot hide balls from other overlays. */
-    aimLineMesh = new THREE.Mesh(unitCyl, new THREE.MeshBasicMaterial({ color: 0xffe86b, depthWrite: false, depthTest: false }));
+    /* dashed line, not a solid cylinder: dashes clearly separate the trajectory from
+       the collinear cue stick so it reads as "from the ball", not a rod through it. */
+    aimLineMesh = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 1, 0)]),
+      new THREE.LineBasicMaterial({ color: 0xffe86b, depthWrite: false, depthTest: false }));
     aimLineMesh.renderOrder = 9;
     aimLineMesh.visible = false; scene.add(aimLineMesh);
     /* compact bright dot floated above the struck ball centre: unambiguously flags
@@ -734,10 +788,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
           var b = state.balls[i];
           var m = ballsById[b.id];
           if (!m) continue;
-          m.position.copy(l2w(b.x, b.y, REST_Y));
-          m.visible = !b.inPocket;
-        }
-      }
+           m.position.copy(l2w(b.x, b.y, REST_Y));
+           m.visible = !b.inPocket;
+           _updateBallSpin(b, m);
+         }
+       }
 
       /* aim line + stick (only while aiming, hide during flight / game over) */
       var wantAim = false, aimX = 0, aimY = 0, power = 0;
@@ -749,13 +804,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
         var cue = state.cue;
         var dx = -(aimX - cue.x), dy = -(aimY - cue.y);
         var dlen = Math.sqrt(dx * dx + dy * dy) || 1; dx /= dlen; dy /= dlen;
-          /* tip of the cue in world space: the single point both the stick nose and
-             the aim line share, so the trajectory reads as being fired from the
-             stick tip instead of floating next to it */
-          var tipX = cue.x - dx * C.BR, tipY = cue.y - dy * C.BR;
-          var nose = l2w(tipX, tipY, REST_Y);
+           /* point BR behind the ball centre along the shot direction (cue side);
+              kept for the optional [AIMDBG] pointer-vs-tip angle log only */
+           var tipX = cue.x - dx * C.BR, tipY = cue.y - dy * C.BR;
 
-          /* which object ball will be struck first? Marker + felt ring sit at the
+           /* which object ball will be struck first? Marker + felt ring sit at the
              predicted impact point on its surface; fall back to the rail line when
              the shot goes empty. */
           var fc = firstContact(cue.x, cue.y, dx, dy, state.balls);
@@ -763,8 +816,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
           var gx = fc.ball ? fc.impactX : cue.x + dx * lenL;
           var gy = fc.ball ? fc.impactY : cue.y + dy * lenL;
 
-         aimLineMesh.visible = true; shaftMesh.visible = true; buttMesh.visible = true;
-         orientAlong(aimLineMesh, nose, l2w(gx, gy, REST_Y), C.BR * 0.2);
+          aimLineMesh.visible = true; shaftMesh.visible = true; buttMesh.visible = true;
+           /* trajectory runs from the ball's surface in the shot direction to the
+              predicted impact point; rendered as dashed world-space segments so it reads
+              as a guide anchored to the ball, not an extension of the cue stick */
+           setAimDash(l2w(cue.x + dx * C.BR, cue.y + dy * C.BR, REST_Y), l2w(gx, gy, REST_Y));
          targetRingMesh.position.copy(l2w(gx, gy, 0.4));
          if (fc.ball) {
            /* a struck ball exists: bright dot floats above its centre and the felt
@@ -820,10 +876,12 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
        }
 
 
-        /* Optional on-screen aim debug: while aiming, log the cursor's screen angle
-           vs the cue tip's screen angle (both relative to the projected ball centre).
-           Enable in the browser console with P.DEBUG_AIM_LOG = true, then aim.
-           Off by default; never affects gameplay. */
+         /* Optional on-screen aim debug: while aiming, log the cursor's screen angle
+            vs the cue tip's screen angle (both relative to the projected ball centre),
+            plus the rendered aim-line endpoints in logical and screen coordinates and
+            the first-contact target. Enable in the browser console with
+            Poole.DEBUG_AIM_LOG = true (global object is window.Poole), then aim.
+            Off by default; never affects gameplay. */
         if (P.DEBUG_AIM_LOG) {
           var _dbgNow = performance.now();
           if (!P._aimLogT || _dbgNow - P._aimLogT > 120) {
@@ -833,8 +891,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
             var _cw = _r ? _r.width : (renderer.domElement.clientWidth || 1);
             var _ch = _r ? _r.height : (renderer.domElement.clientHeight || 1);
             var _bScr = _ptToCanvas(l2w(cue.x, cue.y, REST_Y), _cw, _ch);
-            var _tScr = _ptToCanvas(l2w(tipX, tipY, REST_Y), _cw, _ch);
-            var _pcx = P.UI.lastPtr ? P.UI.lastPtr.x - (_r ? _r.left : 0) : 0;
+             var _tScr = _ptToCanvas(l2w(tipX, tipY, REST_Y), _cw, _ch);
+             /* aim-line endpoints in screen space — compare 1:1 with what you see */
+             var _sScr = _ptToCanvas(l2w(cue.x + dx * C.BR, cue.y + dy * C.BR, REST_Y), _cw, _ch);
+             var _eScr = _ptToCanvas(l2w(gx, gy, REST_Y), _cw, _ch);
+             var _pcx = P.UI.lastPtr ? P.UI.lastPtr.x - (_r ? _r.left : 0) : 0;
             var _pcy = P.UI.lastPtr ? P.UI.lastPtr.y - (_r ? _r.top : 0) : 0;
             var _curA = Math.atan2(_pcy - _bScr.y, _pcx - _bScr.x);
             var _tipA = Math.atan2(_tScr.y - _bScr.y, _tScr.x - _bScr.x);
@@ -845,9 +906,15 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
               cursorScr: [+(_pcx).toFixed(1), +(_pcy).toFixed(1)],
               tipScr: [+(_tScr.x.toFixed(1)), +(_tScr.y.toFixed(1))],
               aimLogical: [+(aimX).toFixed(1), +(aimY).toFixed(1)],
-              cueLogical: [+(cue.x).toFixed(1), +(cue.y).toFixed(1)],
-              cursorDeg: _d(_curA), tipDeg: _d(_tipA), diffDeg: _d(_diff)
-            }));
+               cueLogical: [+(cue.x).toFixed(1), +(cue.y).toFixed(1)],
+               lineStartLogical: [+(cue.x + dx * C.BR).toFixed(1), +(cue.y + dy * C.BR).toFixed(1)],
+               lineEndLogical: [+(gx).toFixed(1), +(gy).toFixed(1)],
+               lineLenUnits: (Math.sqrt((gx - cue.x - dx * C.BR) * (gx - cue.x - dx * C.BR) + (gy - cue.y - dy * C.BR) * (gy - cue.y - dy * C.BR))).toFixed(1),
+               fcBall: fc ? String(fc.ball.id) : null,
+               lineStartScr: [+(_sScr.x.toFixed(1)), +(_sScr.y.toFixed(1))],
+               lineEndScr: [+(_eScr.x.toFixed(1)), +(_eScr.y.toFixed(1))],
+               cursorDeg: _d(_curA), tipDeg: _d(_tipA), diffDeg: _d(_diff)
+             }));
           }
         }
         } else {

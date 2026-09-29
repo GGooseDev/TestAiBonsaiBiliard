@@ -33,8 +33,12 @@
 
   /* --- physics --- */
   C.FRICTION = 0.9;
-  C.STOP_SPEED = 30;
-  C.BALL_RESTITUTION = 0.9;
+   C.STOP_SPEED = 30;
+   /* Orientation-reset threshold for ball rolling spin: normal per-frame travel is at
+      most MAX_SHOT_SPEED * STEP (~21 units); respot/newGame jumps are hundreds of
+      units, so a big jump re-orientates the ball instead of spinning it wildly. */
+   C.BALL_ROT_RESET_DIST = C.BR * 16;
+   C.BALL_RESTITUTION = 0.9;
   C.CUSHION_E = 0.85;
   C.TANGENT_KEEP = 0.985;
   C.STEP = 1 / 60;
@@ -92,6 +96,9 @@
   C.FLASH_MS = 1800;
   C.MSG_RISE = 80;
   C.TARGET_RING_R = C.BR + 3;
+/* dashed aim trajectory: dash length and gap between dashes (world units) */
+C.AIM_DASH = 9;
+C.AIM_GAP = 6;
   C.POWER_RING_MIN = 4;
    C.POWER_RING_MAX = 13;
 

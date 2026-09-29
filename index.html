@@ -60,12 +60,17 @@
    #gameover[aria-busy="true"] { display: none; }
    .go-label { font-size: 15px; letter-spacing: .22em; text-transform: uppercase;
                color: #86b7c9; text-shadow: 0 0 14px rgba(0,0,0,.8); }
-   .go-name  { font-size: 44px; font-weight: bold; color: #fff;
-               text-shadow: 0 0 32px rgba(90,215,255,.6), 0 6px 18px rgba(0,0,0,.8); }
- </style>
+    .go-name  { font-size: 44px; font-weight: bold; color: #fff;
+                text-shadow: 0 0 32px rgba(90,215,255,.6), 0 6px 18px rgba(90,215,255,.8); }
+
+    /* temporary debug: which webgl3d.js build is actually executing */
+    #dbg-version { position: fixed; bottom: 4px; right: 10px; z-index: 10;
+                  font-size: 11px; color: rgba(255,255,255,.4); pointer-events: none; }
+</style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="dbg-version" aria-hidden="true"></div>
 
 <div id="hud">
   <div class="topbar">
@@ -98,7 +103,7 @@
      Order matters (each module depends on the ones before it). THREE.js must
      load first; the 3D renderer (webgl3d.js) loads after UI. -->
 <script src="lib/three.min.js"></script>
-<script src="src/config.js"></script>
+<script src="src/config.js?v=20260929b"></script>
 <script src="src/vec.js"></script>
 <script src="src/ball.js"></script>
 <script src="src/table.js"></script>
@@ -107,7 +112,7 @@
 <script src="src/player.js"></script>
 <script src="src/bot.js"></script>
   <script src="src/ui.js"></script>
-  <script src="src/webgl3d.js"></script>
+  <script src="src/webgl3d.js?v=20260929b"></script>
 <script src="src/game.js"></script>
 <script src="src/main.js"></script>
 </body>

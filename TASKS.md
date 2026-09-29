@@ -8,21 +8,24 @@ Update on every chunk. Never mark `done` without a passing command or in-browser
 - No history, no "Done" section, no stale options — stale entries bloat context/cache.
 
 ## Active (in progress)
-- Cue stick: rigid RECEDING instead of stretching; back-pull capped at half a stick
-  (`C.CUE_MAX_RECED = C.CUE_STICK_LEN * 0.5`). Aim rotation is recomputed every frame
-  from the live pointer so the cue tracks the cursor continuously while charging
-  (no frozen "old" angle).
-  - Files: `src/webgl3d.js` (`rec = power * Math.min(recMax, C.CUE_MAX_RECED)`; orientation
-    from `dx/dy` each frame), `src/config.js` (`CUE_MAX_RECED`).
-  - Verified headless: `node --check src/config.js && node --check src/webgl3d.js` OK;
-    `node _test-cue-rotation.js` -> PASS 216/216; `node smoke-e2e.js` -> all [OK].
-  - Tip stays between ball and finger at full power (rec <= 120 < POWER_MAX_DIST=240);
-    on-screen cap (`recMax`) still prevents frame clipping. Temp helper `_fixcue.js` deleted.
+- Aim trajectory look: geometry was already correct (verified via [AIMDBG] logs: line starts on the
+  cue-ball front surface `cue.x + dx*C.BR` and ends at the struck ball's near-surface first-contact
+  point), but it read as one solid rod passing through the white ball because the yellow cylinder is
+  collinear with the cue stick, the ball is only ~14px on screen, and while charging the stick tip
+  recedes from the ball. Fix: render the trajectory as a DASHED line — `aimLineMesh` replaced by a
+  `THREE.Line` + `LineBasicMaterial(0xffe86b)` built per frame by `setAimDash(a, b)` into world-space
+  dash segments (`C.AIM_DASH=9` / `C.AIM_GAP=6` world units); start still at the ball surface, end
+  unchanged; solid cylinder mesh and `orientAlong()` helper removed.
+  - Files: `src/webgl3d.js` (version marker -> `20260929-aimdash`; `setAimDash()` helper; aimLineMesh
+    creation ~line 682; draw() aim block call site ~line 821); `src/config.js` (+`C.AIM_DASH`,
+    `C.AIM_GAP`); `index.html` (cache-buster `?v=20260929b`).
+  - Verified headless: `node --check src/webgl3d.js` OK; `node smoke-e2e.js` -> all [OK];
+    dash-builder sanity check (long line: dashes from t=0 to full length, short line: one dash,
+    zero length: fallback) OK. No `orientAlong` references remain in code. Rendering-only change —
+    no headless WebGL check exists; needs user in-browser confirmation.
 
 ## User confirmation (needed)
-- Hard-reload in browser, charge the cue: it should slide straight back behind the ball
-  without elongating, and its aim angle must keep following the cursor with no frozen
-  rotation. Butt end must never leave the frame.
+- After a no-line report: `src/config.js` had no cache-buster and was likely served from browser cache without the new `C.AIM_DASH`/`C.AIM_GAP` constants → dash coords NaN → invisible line. Added `?v=20260929b` to config.js too (index.html). User must hard-reload; corner label must say `webgl3d 20260929-aimdash`. If still no line, send any red F12 console errors.
 
 ## Notes
 - Headless only: visual changes stay "fixed-in-code" until the user confirms.
