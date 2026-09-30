@@ -1,8 +1,9 @@
 /* Startup menu: full-screen shader backdrop (warm "fire" bokeh, palette distinct
    from the cool table room) + a large bold title and three horizontal mode
    buttons. Classic fades the overlay out and hands control to P.Game.start();
-   Battle Arena / Viewer are placeholders that toast "coming soon". Exposed as
-   window.Poole.Menu ({show, pick}). Loaded after THREE.js + config.js in index.html. */
+   Viewer opens P.Viewer (the billiard-ball character scene); Battle Arena is
+   still a "coming soon" placeholder. Exposed as window.Poole.Menu ({show, pick}).
+   Loaded after THREE.js + config.js in index.html. */
 (function () {
   var W = window, P = W.Poole;
   if (!P) W.Poole = P = {};
@@ -16,6 +17,7 @@
   var renderer = null, scene = null, camera = null, mat = null, quadMesh = null;
   var rafId = null, built = false, exiting = false;
   var _cb = null;               /* onSelect callback registered via show() */
+  var _pickedMode = null;       /* mode of the button pressed before teardown */
   var _px = 0, _py = 0;         /* raw pointer in -1..1 (centered) */
   var _tx = 0, _ty = 0;         /* lerped parallax -> uCamPar */
 
@@ -234,12 +236,11 @@
 
   function _pick(mode) {
     if (!built || exiting) return;
-    if (mode === 'arena' || mode === 'viewer') {
-      toast();
-      return;
-    }
-    /* classic: fade out, free the GL context + DOM, then hand off to the caller */
+    if (mode === 'arena') { toast(); return; }
+    /* classic and viewer: fade out the overlay, then hand off to the caller
+       (main.js starts the game for classic, opens P.Viewer for viewer) */
     exiting = true;
+    _pickedMode = mode;
     rootEl.classList.add('menu-exit');
     W.setTimeout(function () { teardown(); }, FADE_MS);
   }
@@ -254,7 +255,7 @@
     W.document.body.classList.remove('menu-open');
     canvasEl = null; renderer = null; scene = null; camera = null; mat = null; quadMesh = null;
     built = false; exiting = false;
-    if (_cb && typeof _cb === 'function') _cb('classic');
+    if (_cb && typeof _cb === 'function') _cb(_pickedMode || 'classic');
   }
 
   function _onKey(e) {

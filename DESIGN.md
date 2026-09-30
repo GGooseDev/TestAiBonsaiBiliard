@@ -91,3 +91,15 @@ index.html contains only the canvases/HUD and 12 `<script src="src/...">` tags i
 - Final pixel-perfect check still needs a browser (double-click `index.html`):
   human vs bot, break with a pocketed colour, scratch + 8 on one shot, and turn
   pass on an empty shot.
+
+## 10. Character viewer (added after main game)
+- **src/character.js** — `P.Character.create({ ballId })` → `{ group, mode, morphT, setMode(m), setTransform("char"|"ball"), update(dt) }`.
+  - Body: sphere from an existing game ball color (`CHAR_BALL_ID`, default `"11"` striped blue). Striped balls get a white equator band + canvas-rendered number badge at the back pole.
+  - Face: two flat disc eyes (white sclera, dark iris, highlight) with a short blink squash; no mouth (kept minimal per design).
+  - Feet: red sneakers (`SNK_UPPER_HEX` / `SOLO_HEX`) with white laces + toe cap, no legs — they sit on the floor and lift procedurally.
+  - Hands: white gloves (fist sphere + 4 fanned fingers + inward thumb).
+  - Animation: procedural idle (breathing scale, sway) and walk cycle (alternating foot lift, body bob, arm swing), blended by a `walkBlend` spring; blink on its own period.
+  - Morph ball↔character: single spring (`MORPH_SPEED`) with per-part delays (eyes → gloves → sneakers) and an easeOutBack overshoot; parts hidden when scale < 0.01.
+- **src/viewer.js** — `P.Viewer { open(onBack), close(), isOpen() }`. Own `#viewer-canvas` overlay (z-index 40, above the menu's 30) with a separate WebGL scene: floor + grid at y = FLOOR_Y, hemisphere light + shadow-casting directional light. No OrbitControls in the bundled three.min.js, so camera is custom: azimuth/polar/distance with drag rotate, wheel zoom (clamped CAM_START_D 235 → [90..420]), pinch on touch, gentle auto-rotate when idle. DOM overlay buttons: WALK/IDLE, BALL/CHARACTER, BACK TO MENU (+ Esc).
+- **Wiring**: index.html loads `character.js` then `viewer.js` before `menu.js`; menu's 3rd button/key calls the `afterMenu` callback with `"viewer"`; main.js routes it to `P.Viewer.open(onBack)` (the bokeh backdrop loop keeps running underneath, hidden by the opaque viewer canvas); BACK TO MENU / Esc → `P.Menu.show(afterMenu)`.
+- **Headless verification**: `test/character-viewer.smoke.js` stubs THREE + document and drives the character/viewer loops — model build, morph to/from ball, blink squash, walk lift, mode state, viewer open/close/reopen, no orphaned rAF.

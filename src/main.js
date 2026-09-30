@@ -44,12 +44,20 @@
       if (backdropRaf && P.WebGL3D) P.WebGL3D.resize(W.innerWidth, W.innerHeight);
     });
 
+    /* menu -> scene handoff. Classic starts the game loop; viewer opens the
+       character viewer (opaque, covers #game) and hands control back to the
+       menu via its BACK TO MENU button / Esc. */
+    function afterMenu(mode) {
+      if (mode === 'classic') { hideBackdrop(); P.Game.start(canvas); }
+      else if (mode === 'viewer' && P.Viewer) P.Viewer.open(function () { showMenu(); });
+    }
+    function showMenu() {
+      P.Menu.show(afterMenu);
+    }
+
     if (P.Menu && typeof P.Menu.show === 'function') {
       showBackdrop();
-      P.Menu.show(function (mode) {
-        hideBackdrop();
-        if (mode === 'classic') P.Game.start(canvas);
-      });
+      showMenu();
     } else {
       /* menu module missing: fall back to launching the game directly */
       P.Game.start(canvas);
