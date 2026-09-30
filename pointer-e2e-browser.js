@@ -40,7 +40,9 @@ function fail(msg) {
 
 function serve(req, res) {
   if (req.url === "/favicon.ico") { res.writeHead(204, {}); return res.end(); }
-  req.url = (req.url === "/" || req.url === "/index.html") ? "/index.html" : req.url;
+  /* strip query strings so versioned tags (?v=...) resolve to real files */
+  var u = req.url.split("?")[0];
+  req.url = (u === "/" || u === "/index.html") ? "/index.html" : u;
   var p = path.join(ROOT, decodeURIComponent(req.url));
   if (!p.startsWith(path.resolve(ROOT))) { res.writeHead(403, {}); return res.end(); }
   fs.readFile(p, function (err, buf) {
@@ -121,6 +123,13 @@ async function main() {
   } catch (e) {
     fail("page load failed: " + e.message);
   }
+
+  // The page opens on the startup menu; select Classic so the real game boots.
+  await page.evaluate(function () {
+    if (window.Poole && window.Poole.Menu && typeof window.Poole.Menu.pick === "function") {
+      window.Poole.Menu.pick("classic");
+    }
+  });
 
   // ---- read-state helper (page context) ---------------------------------------
   function readState() {

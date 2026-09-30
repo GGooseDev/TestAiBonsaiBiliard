@@ -94,6 +94,17 @@
     "#ff7f9e",  /* pink  */
     "#7ae0a4"   /* mint  */
   ];
+
+  /* --- startup menu backdrop (shader background, warm "fire" palette — deliberately
+     distinct from the cool blue/violet table-room bokeh above) --- */
+  C.MENU_BG = "#160b1f";                          /* dark indigo-black (not pink) so warm glints read as bokeh, not a flat fill */
+  C.MENU_PALETTE = [
+    "#ff5e3a",   /* coral red */
+    "#ff9b3a",   /* orange    */
+    "#ffd166",   /* gold      */
+    "#e02a4d"    /* crimson   */
+  ];
+
   C.FLASH_MS = 1800;
   C.MSG_RISE = 80;
   C.TARGET_RING_R = C.BR + 3;

@@ -65,7 +65,36 @@
 
     /* temporary debug: which webgl3d.js build is actually executing */
     #dbg-version { position: fixed; bottom: 4px; right: 10px; z-index: 10;
-                  font-size: 11px; color: rgba(255,255,255,.4); pointer-events: none; }
+                   font-size: 11px; color: rgba(255,255,255,.4); pointer-events: none; }
+
+    /* ---- startup menu ------------------------------------------------------- */
+    #menu-root { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; opacity: 1; transition: opacity .3s ease; }
+    #menu-root.menu-exit { opacity: 0; pointer-events: none; }
+    /* The in-game WebGL scene (table + warm shimmering bokeh) renders behind the menu
+       on #game. Keep this canvas fully transparent so it never covers that live backdrop. */
+    #menu-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: none; }
+    #menu-ink { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: clamp(26px, 4.5vh, 68px); pointer-events: none; user-select: none; text-align: center; }
+    .menu-title { margin: 0; font-family: "Arial Black", Impact, "Franklin Gothic Bold", Arial, sans-serif; font-weight: 900; font-size: clamp(27px, 6.25vw, 84px); transform: translateY(-12%); line-height: 0.95; letter-spacing: .03em; text-transform: uppercase; color: #fff7ec;
+                 text-shadow: 0 0 18px rgba(255, 140, 54, .9), 0 0 60px rgba(255, 90, 40, .6), 0 0 130px rgba(255, 60, 30, .35), 0 10px 40px rgba(0, 0, 0, .6); }
+    .menu-sub { margin: 0; font-family: Arial, Helvetica, sans-serif; font-weight: bold; font-size: clamp(11px, 1.4vw, 15px); letter-spacing: .42em; text-transform: uppercase; color: rgba(255, 222, 190, .78); text-shadow: 0 2px 12px rgba(0, 0, 0, .6); }
+    .menu-items { display: flex; gap: clamp(12px, 2vw, 30px); pointer-events: auto; flex-wrap: wrap; justify-content: center; padding: 0 16px; }
+    .menu-item { --a: #ffd166; --g: rgba(255, 209, 102, .55);
+                 font-family: Arial, Helvetica, sans-serif; font-weight: bold; font-size: clamp(15px, 2vw, 21px); letter-spacing: .18em; text-transform: uppercase; color: #fff;
+                 background: rgba(255, 246, 230, .07); border-radius: 999px; padding: 13px clamp(20px, 3.5vw, 40px); cursor: pointer;
+                 border: 1px solid rgba(255, 246, 230, .35); box-shadow: 0 4px 18px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
+                 transition: transform .09s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease; }
+    .menu-item:hover { transform: translateY(-3px); background: rgba(255, 246, 230, .13); border-color: var(--a); box-shadow: 0 8px 26px rgba(0, 0, 0, .5), 0 0 30px var(--g), inset 0 1px 0 rgba(255, 255, 255, .15); }
+    .menu-item:active { transform: translateY(-1px); }
+    .mi-classic { --a: #ff9b3a; --g: rgba(255, 155, 58, .55); }
+    .mi-arena   { --a: #e02a4d; --g: rgba(224, 42, 77, .55); }
+    .mi-viewer  { --a: #ffd166; --g: rgba(255, 209, 102, .55); }
+
+    /* all in-game UI (topbar, hints, msg, group picker, play-again, game-over
+       card) is hidden behind the menu overlay while it is shown */
+    body.menu-open #hud { display: none; }
+
+    .menu-toast { position: absolute; bottom: clamp(28px, 5vh, 64px); left: 50%; transform: translateX(-50%); font-family: Arial, Helvetica, sans-serif; font-weight: bold; font-size: clamp(13px, 1.6vw, 17px); letter-spacing: .3em; text-transform: uppercase; color: rgba(255, 235, 205, .9); text-shadow: 0 2px 14px rgba(0, 0, 0, .8); opacity: 0; transition: opacity .25s ease; }
+    .menu-toast.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -103,7 +132,7 @@
      Order matters (each module depends on the ones before it). THREE.js must
      load first; the 3D renderer (webgl3d.js) loads after UI. -->
 <script src="lib/three.min.js"></script>
-<script src="src/config.js?v=20260929b"></script>
+<script src="src/config.js?v=20260930h"></script>
 <script src="src/vec.js"></script>
 <script src="src/ball.js"></script>
 <script src="src/table.js"></script>
@@ -113,9 +142,10 @@
 <script src="src/bot.js"></script>
   <script src="src/ui.js"></script>
   <script src="src/noise.js?v=20260929e"></script>
-   <script src="src/webgl3d.js?v=20260929e"></script>
-   <script src="src/sound.js"></script>
-<script src="src/game.js"></script>
-<script src="src/main.js"></script>
+        <script src="src/webgl3d.js?v=20260930l"></script>
+       <script src="src/sound.js"></script>
+    <script src="src/menu.js?v=20260930q"></script>
+<script src="src/game.js?v=20260930j"></script>
+<script src="src/main.js?v=20260930m"></script>
 </body>
 </html>

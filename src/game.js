@@ -87,6 +87,7 @@
     clearBotTimer();
     groupPickerIdx = -1;
     state = buildState();
+    if (P.WebGL3D && P.WebGL3D.resetZoom) P.WebGL3D.resetZoom();   /* back to the default far frame on a fresh game */
 
     P.Rules.init(state.players);                     /* players/idx/phase -> shared players */
     P.Physics.resetShot();

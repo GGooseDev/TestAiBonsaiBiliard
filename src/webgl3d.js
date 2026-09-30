@@ -59,6 +59,20 @@
   var ndc = new THREE.Vector2();
   var UP = new THREE.Vector3(0, 1, 0); /* shared unit-up for setFromUnitVectors (never mutated) */
 
+  /* wheel zoom: level in [0,1] тАФ 0 = far base frame (current default), 1 = straight
+     down over the field centre. The current level eases toward the wheel-set target
+     each draw() frame so each notch glides and trackpad deltas stay smooth. */
+  var NEAR_ZOOM = 0.75;       /* top-down height as a fraction of D (D * NEAR_ZOOM) */
+  var ZOOM_SPEED = 6.0;       /* easing rate, per second: factor = 1 - exp(-dt*speed) */
+  var ZOOM_SENS = 0.0025;     /* zoom-level change per wheel deltaY pixel (~┬▒100/notch) */
+  var nearCamPos = new THREE.Vector3();   /* top-down end position: (0, D*NEAR_ZOOM, 0) */
+  var farLookAt  = new THREE.Vector3();   /* far-end target: (0, RAIL_H*0.2, 0) */
+  var nearLookAt = new THREE.Vector3(0, 0, 0); /* top-down target: field centre, straight down */
+  var _zoomPos   = new THREE.Vector3();   /* per-frame interpolated camera position */
+  var _zoomLook  = new THREE.Vector3();   /* per-frame interpolated lookAt point */
+  var zoomT = 0, zoomTargetT = 0;        /* current / target zoom level in [0,1] */
+  var _lastDrawNow = 0;                  /* ms timestamp of previous draw() call */
+
    var ballsById = {};
    /* per-ball rolling state (rendering only): world orientation quaternion and last
       rendered logical position; identity reset on teleport via C.BALL_ROT_RESET_DIST. */
@@ -72,8 +86,9 @@
   var bokehMat = null;          /* animated colored-glint backdrop shader (set in init) */
   var bokehHalf = 0;            /* half side of the backdrop plane, world units; for parallax normalization */
   var bokehMesh = null;         /* backdrop mesh, translated to cancel camera shake (set in init) */
-  var bokehMeshBasePos = new THREE.Vector3(); /* backdrop rest position, world units */
-  var DEBUG_BG = false;         /* index.html?debug_bg=1 : camera isolates the backdrop for verification */
+   var bokehMeshBasePos = new THREE.Vector3(); /* backdrop rest position, world units */
+   var tableGroup = null;       /* whole-table group (set in init); hidden when draw() gets no state (menu) */
+   var DEBUG_BG = false;         /* index.html?debug_bg=1 : camera isolates the backdrop for verification */
   /* resolved early (before any GL work) so triage banners in init() can run even
      if renderer creation throws; the old late read at end of init() is removed. */
   if (W.location && W.location.search.indexOf('debug_bg=1') >= 0) DEBUG_BG = true;
@@ -256,8 +271,11 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       D * Math.cos(THREE.MathUtils.degToRad(TILT_DEG)),
       D * Math.sin(THREE.MathUtils.degToRad(TILT_DEG))
     );
+    farLookAt.set(0, RAIL_H * 0.2, 0);
+    /* top-down end: straight down over the field centre, plus zoom (NEAR_ZOOM < 1) */
+    nearCamPos.set(0, D * NEAR_ZOOM, 0);
     scene.add(camera);
-       camera.lookAt(0, RAIL_H * 0.2, 0);
+       camera.lookAt(farLookAt.x, farLookAt.y, farLookAt.z);
    }
 
   /* integrate no-slip rolling spin for one ball from its per-frame logical
@@ -547,6 +565,10 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     scene = new THREE.Scene();
     /* dim room backdrop so the overhead frame has context (no empty black void) */
     scene.background = new THREE.Color(0x14233f);
+    /* one toggleable group for the whole table (felt + cab + legs + rails + pockets
+       + balls + cue/aim overlays) so the menu backdrop loop can render only the bokeh room */
+    tableGroup = new THREE.Group();
+    scene.add(tableGroup);
     camera = new THREE.PerspectiveCamera(FOV, W.innerWidth / W.innerHeight, 5, 3000);
     raycaster = new THREE.Raycaster();
     hitPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); /* raycast the felt surface (y = 0) so pointer aim maps onto the table, not the elevated ball-centre height */
@@ -602,14 +624,14 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     var felt = new THREE.Mesh(new THREE.BoxGeometry(C.IX1 - C.IX0, FELT_THICK, C.IY1 - C.IY0), feltMat);
     felt.position.set(0, -FELT_THICK / 2, 0);
     felt.receiveShadow = true;
-    scene.add(felt);
+    tableGroup.add(felt);
 
     /* cabinet under the felt */
     var cabW = (C.IX1 - C.IX0) + RAIL_DEPTH * 2.4, cabHgt = (C.IY1 - C.IY0) + RAIL_DEPTH * 2.4;
     var cab = new THREE.Mesh(new THREE.BoxGeometry(cabW, CAB_H, cabHgt), cabMat);
     cab.position.set(0, -FELT_THICK / 2 - CAB_H / 2, 0);
     cab.receiveShadow = true;
-    scene.add(cab);
+    tableGroup.add(cab);
 
     /* legs below the cabinet */
     var legLen = 150;
@@ -618,8 +640,8 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     for (var lx = -1; lx <= 1; lx += 2) for (var lz = -1; lz <= 1; lz += 2) {
       var leg = new THREE.Mesh(legGeo, cabMat);
       leg.position.set(lx * HALF_W, legTopY - legLen / 2, lz * HALF_H);
-      leg.castShadow = true;
-      scene.add(leg);
+        leg.castShadow = true;
+        tableGroup.add(leg);
     }
 
     /* room backdrop below/around the cabinet: an animated bokeh field of soft,
@@ -671,7 +693,7 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       l.castShadow = true; l.receiveShadow = true;
       sides.push(l);
     }
-    for (var s = 0; s < sides.length; s++) scene.add(sides[s]);
+    for (var s = 0; s < sides.length; s++) tableGroup.add(sides[s]);
 
     /* pockets: dark discs recessed just under the felt top */
     var pocketGeo = new THREE.CylinderGeometry(C.POCKET_R, C.POCKET_R * 0.7, 5, 18);
@@ -679,8 +701,8 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     for (var pi = 0; pi < C.pockets.length; pi++) {
       var p = C.pockets[pi];
       var pm = new THREE.Mesh(pocketGeo, pocketMat);
-      pm.position.copy(l2w(p.x, p.y, -1));
-      scene.add(pm);
+        pm.position.copy(l2w(p.x, p.y, -1));
+        tableGroup.add(pm);
     }
 
     /* balls (standard material + generated number texture; one mesh per id) */
@@ -692,9 +714,9 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       var id = allIds[bi];
       var mat = new THREE.MeshStandardMaterial({ map: makeBallTexture(id), roughness: 0.35, metalness: 0.05 });
       var bm = new THREE.Mesh(ballGeo, mat);
-      bm.castShadow = true; bm.receiveShadow = true;
-      bm.visible = id === 'cue';
-      scene.add(bm);
+        bm.castShadow = true; bm.receiveShadow = true;
+        bm.visible = id === 'cue';
+        tableGroup.add(bm);
       ballsById[id] = bm;
     }
 
@@ -711,13 +733,13 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 1, 0)]),
       new THREE.LineBasicMaterial({ color: 0xffe86b, depthWrite: false, depthTest: false }));
     aimLineMesh.renderOrder = 9;
-    aimLineMesh.visible = false; scene.add(aimLineMesh);
+    aimLineMesh.visible = false; tableGroup.add(aimLineMesh);
     /* compact bright dot floated above the struck ball centre: unambiguously flags
        "this is the ball you will hit" without hiding its number */
     targetMesh = new THREE.Mesh(new THREE.SphereGeometry(C.BR * 0.45, 16, 12),
                                 new THREE.MeshBasicMaterial({ color: 0xffffff }));
     targetMesh.renderOrder = 9;
-    targetMesh.visible = false; scene.add(targetMesh);
+    targetMesh.visible = false; tableGroup.add(targetMesh);
     /* flat ring on the felt around the predicted contact point: from the overhead
        camera a solid dot alone does not read, so this ground ring makes the shot's
        landing spot unambiguous. Lies just above the felt top, facing up. */
@@ -726,7 +748,7 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       new THREE.MeshBasicMaterial({ color: 0xffe86b }));
     targetRingMesh.renderOrder = 10;
     targetRingMesh.rotation.x = -Math.PI / 2; /* face up onto the felt */
-    targetRingMesh.visible = false; scene.add(targetRingMesh);
+    targetRingMesh.visible = false; tableGroup.add(targetRingMesh);
     /* two-segment cue stick (the handle was always two pieces: a lighter tapered
          shaft and a darker ebony butt). Both segments are parented under one group
          whose origin is the tip (nose) contact point, so re-aiming rotates the whole
@@ -735,7 +757,7 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
     var shaftMat = new THREE.MeshStandardMaterial({ color: 0xf3dca6, roughness: 0.35, metalness: 0 });
     var buttMat  = new THREE.MeshStandardMaterial({ color: 0x3a2412, roughness: 0.45, metalness: 0 });
     cueGroup = new THREE.Group();
-    scene.add(cueGroup);
+    tableGroup.add(cueGroup);
     shaftMesh = new THREE.Mesh(unitCyl, shaftMat);
     shaftMesh.visible = false; shaftMesh.castShadow = true; shaftMesh.receiveShadow = true; cueGroup.add(shaftMesh);
     buttMesh = new THREE.Mesh(unitCyl, buttMat);
@@ -750,18 +772,34 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
        WebGLRenderer constructor throws if it can't obtain a context, so reaching
        this line means GL is available. Consumers gate on this instead of
        re-requesting (possibly type-mismatched) contexts from the canvas. */
-      glReady = !!renderer;
-      /* triage (DEBUG_BG only): GL context + full scene build done; the backdrop plane,
-         foreground meshes and the red debug quad are in the scene now. */
-      if (DEBUG_BG && console && console.info) {
-        console.info('[BG_DBG] step 1: GL context ready, scene built (backdrop + red debug quad). Red tint over glints = renderer/camera/shader all OK.');
-      }
-    }
+       glReady = !!renderer;
+       /* wheel -> zoom target (smooth per-frame easing lives in draw()) */
+       if (!DEBUG_BG && W.document) {
+         W.document.addEventListener('wheel', _onZoomWheel, { passive: false });
+       }
+       /* triage (DEBUG_BG only): GL context + full scene build done; the backdrop plane,
+          foreground meshes and the red debug quad are in the scene now. */
+       if (DEBUG_BG && console && console.info) {
+         console.info('[BG_DBG] step 1: GL context ready, scene built (backdrop + red debug quad). Red tint over glints = renderer/camera/shader all OK.');
+       }
+     }
 
-  /* ---- public API -------------------------------------------------------- */
+   /* wheel -> zoom target. Wheel up moves toward the top-down end (closer); the
+      actual transition is eased per-frame in draw(), so each notch glides to its
+      new level and continuous trackpad deltas stay smooth. preventDefault stops
+      page scroll; non-passive is required for that in modern browsers. */
+   function _onZoomWheel(e) {
+     if (DEBUG_BG || !camera) return;
+     e.preventDefault();
+     var dy = e.deltaY || 0;
+     zoomTargetT = Math.max(0, Math.min(1, zoomTargetT - dy * ZOOM_SENS));
+   }
+
+   /* ---- public API -------------------------------------------------------- */
   P.WebGL3D = {
     ok: function() { return glReady; },           /* did init secure a real GL context? */
     init: function (canvas) { init(canvas); },
+    resetZoom: function () { zoomT = 0; zoomTargetT = 0; }, /* back to the default far frame */
     resize: function (w, h) { if (!renderer) return; renderer.setSize(w, h, false); frameCamera(w, h); },
     cueStickRec: function (dx, dy, cx, cy, power) {
       /* Current cue retraction (tip offset beyond C.BR) for a normalized direction + power,
@@ -774,9 +812,12 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
       var recMax = Math.max(0, maxOff - (C.BR + C.CUE_STICK_LEN));
       return power * Math.min(recMax, C.CUE_MAX_RECED);
     },
-    draw: function (state) {
-      if (!renderer) return;
-       var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+     draw: function (state) {
+       if (!renderer) return;
+        /* menu backdrop loop passes no state: hide the whole table and render only
+           the bokeh room so the startup screen is a warm glow, not a live table */
+        tableGroup.visible = !!state;
+        var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
         if (bokehMat) {
           /* time, slow autonomous rotation, and a parallax slide against the camera:
              the colored field walks on its own behind the table and slides when the
@@ -786,31 +827,43 @@ var RAIL_DEPTH = 42, RAIL_H = 46, CAB_H = 70;
           bokehMat.uniforms.uRot.value =
             Math.sin(ut * C.BOKEH_ROT_SPEED) * (C.BOKEH_ROT_A || 0.03) +
             Math.cos((ut * 1.41 * C.BOKEH_ROT_SPEED) + 1.37) * (C.BOKEH_ROT_B || 0.018);
-          var px = ((camera.position.x - baseCamPos.x) / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
-          var pz = ((camera.position.z - baseCamPos.z) / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
-          bokehMat.uniforms.uCamPar.value.set(px, pz);
-        }
+         }
 
-      /* camera shake (decaying jitter around the framed base position) */
-      var shake = 0;
-      if (state && state.shakeUntil > now) shake = Math.min(1, (state.shakeUntil - now) / (C.SHAKE_MS || 700));
-      camOffset.set(
-        Math.sin(now * 0.13 + 1.7) * 6 * shake,
-        Math.sin(now * 0.11 + 2.2) * 4 * shake,
-        Math.sin(now * 0.17 + 0.4) * 6 * shake);
-        camera.position.copy(baseCamPos).add(camOffset);
-        if (shake <= 0) {
-          /* keep the base orientation when not shaking so the backdrop stays put */
-          camera.lookAt(0, RAIL_H * 0.2, 0);
-        }
-        /* backdrop is a fixed room element: translate it by the same shake vector
-           as the camera so its on-screen position never changes while the table
-           jitters; freeze the parallax slide too. (Skipped in debug_bg mode where
-           the camera is overridden and not shaken.) */
-        if (!DEBUG_BG && bokehMesh && bokehMat) {
-          bokehMesh.position.copy(bokehMeshBasePos).add(camOffset);
-          if (shake > 0) bokehMat.uniforms.uCamPar.value.set(0, 0);
-        }
+       /* smooth wheel zoom: ease the current level toward the target set by the wheel.
+          0 = far base frame (current default), 1 = straight down over the field centre. */
+       if (!DEBUG_BG) {
+         var zdt = Math.min(0.1, (now - _lastDrawNow) * 0.001);
+         _lastDrawNow = now;
+         zoomT += (zoomTargetT - zoomT) * (1 - Math.exp(-zdt * ZOOM_SPEED));
+         if (Math.abs(zoomTargetT - zoomT) < 0.001) zoomT = zoomTargetT; /* snap, no tail */
+       }
+
+       /* camera shake (decaying jitter around the framed base position) */
+       var shake = 0;
+       if (state && state.shakeUntil > now) shake = Math.min(1, (state.shakeUntil - now) / (C.SHAKE_MS || 700));
+       camOffset.set(
+         Math.sin(now * 0.13 + 1.7) * 6 * shake,
+         Math.sin(now * 0.11 + 2.2) * 4 * shake,
+         Math.sin(now * 0.17 + 0.4) * 6 * shake);
+         _zoomPos.lerpVectors(baseCamPos, nearCamPos, zoomT);
+         camera.position.copy(_zoomPos).add(camOffset);
+         if (shake <= 0) {
+           /* keep the interpolated orientation when not shaking so the backdrop stays put */
+           _zoomLook.lerpVectors(farLookAt, nearLookAt, zoomT);
+           camera.lookAt(_zoomLook.x, _zoomLook.y, _zoomLook.z);
+         }
+         /* backdrop is a fixed room element: translate it by the same shake vector
+            as the camera so its on-screen position never changes while the table
+            jitters. (Skipped in debug_bg mode where the camera is overridden and not
+            shaken.) Parallax uses only the shake offset, not the full zoom offset тАФ
+            the top-down end moves ~800 world units vs base and would slide half the
+            backdrop uv field out of view otherwise. */
+         var px = (camOffset.x / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
+         var pz = (camOffset.z / bokehHalf) * (C.BOKEH_PARALLAX || 1.0);
+         if (bokehMat) bokehMat.uniforms.uCamPar.value.set(px, pz);
+         if (!DEBUG_BG && bokehMesh) {
+           bokehMesh.position.copy(bokehMeshBasePos).add(camOffset);
+         }
        if (DEBUG_BG) {
          /* debug only: stare down at the glint strip near the near rail so the
             colored backdrop fills the frame and can be checked standalone */
