@@ -168,7 +168,14 @@
 <script src="src/bot.js"></script>
   <script src="src/ui.js"></script>
   <script src="src/noise.js?v=20260929e"></script>
-        <script src="src/webgl3d.js?v=20260930l"></script>
+        <!-- 3D renderer, split into six ordered modules (state -> coords -> assets
+             -> init -> draw -> api). Must load after THREE + UI, before sound/char. -->
+        <script src="src/webgl3d/state.js?v=20261001a"></script>
+        <script src="src/webgl3d/coords.js?v=20261001b"></script>
+        <script src="src/webgl3d/assets.js?v=20261001c"></script>
+        <script src="src/webgl3d/init.js?v=20261001d"></script>
+        <script src="src/webgl3d/draw.js?v=20261001e"></script>
+        <script src="src/webgl3d/api.js?v=20261001f"></script>
        <script src="src/sound.js"></script>
       <script src="src/character.js?v=20261001e"></script>
       <script src="src/viewer.js?v=20261001c"></script>

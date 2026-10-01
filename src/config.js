@@ -138,5 +138,12 @@ C.AIM_GAP = 6;
     [2, 10, 14, 12, 15]
   ];
   C.RACK_GAP_X = C.BR * 2.2;
-  C.RACK_GAP_Y = C.BR * 1.9;
+    C.RACK_GAP_Y = C.BR * 1.9;
+
+    /* --- Battle Arena mode --- */
+    C.ARENA_CHAR_COUNT = 3;        /* balls that become ball-player characters after the break */
+    C.ARENA_MAX_TURNS = 10;        /* top-right turn counter: game ends when this many rounds pass */
+    C.ARENA_MOVE_TIME_MS = 5000;   /* per-turn window in which ball-players may reposition (ms) */
+    C.ARENA_CHAR_SPEED = 120;      /* units/s a character may move during its move window */
+
 })();
