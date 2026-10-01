@@ -35,7 +35,8 @@
   var SOLE_LEN = 24, SOLE_W = 13, SOLE_T = 7;   /* sole slab: len x wide x thick */
   var UPPER_L = 19, UPPER_W = 11, UPPER_H = 9.5; /* puffy red upper ellipsoid    */
   var LACE_R = 1.25;                           /* chunky white laces             */
-  var FOOT_X = 17, FOOT_Z = 8;    /* feet sit slightly forward of the bottom    */
+  var FLOAT_Y = 5;                /* low hover: feet just above the floor       */
+  var FOOT_X = 28, FOOT_Z = 12;   /* feet spread wide and forward of the bottom  */
   var SPLAY = 0.22;               /* toe splay angle, rad                        */
   var SNK_LIFT = 10;              /* max step lift                               */
   var STRIDE_Z = 4;               /* fore/aft foot swing per step                */
@@ -43,7 +44,7 @@
   var ARM_AMPL = 0.65;            /* arm-swing amplitude, rad                    */
   var BOB_IDLE = 1.8;             /* idle vertical bob                           */
   var BOB_WALK = 7;               /* walk vertical bob (highest mid-stride)      */
-  var HAND_X = 34, HAND_Y = 3;
+  var HAND_X = 64, HAND_Y = 4, HAND_Z = 18; /* hands hang out beyond the ball */
   var FIST_R = 9;                 /* rounded fist sphere                          */
   var FINGER_CAP_LEN = 6, FINGER_R = 3.2;  /* capsule fingers                    */
   var THUMB_CAP_LEN = 6, THUMB_R = 3;       /* capsule thumb                      */
@@ -218,9 +219,8 @@
          thumb.castShadow = true;
          hg.add(thumb);
 
-         var hx = hs * HAND_X, hy = HAND_Y;
-         var hz = Math.sqrt(BODY_R * BODY_R - hx * hx - hy * hy) + 1;
-         hg.position.set(hx, hy, hz);
+          var hx = hs * HAND_X, hy = HAND_Y;
+          hg.position.set(hx, hy, HAND_Z);
          /* hang slightly forward and out */
          hg.rotation.x = HAND_TILT_X;
          hg.rotation.y = hs * 0.1;
@@ -275,7 +275,7 @@
          /* body: mid-morph squash + breathing + vertical bob */
          var squish = Math.sin(Math.PI * t);
          bodyMesh.scale.set(1 + 0.14 * squish, (1 - 0.18 * squish) * (1 + 0.025 * breath), 1 + 0.14 * squish);
-         root.position.y = bobY;
+          root.position.y = FLOAT_Y + bobY;   /* hover above the floor */
          /* wobble only while morphing (amplitude dies at t=0 and t=1) */
          root.rotation.y = swayRy * (1 - walk) + Math.sin(t * 6) * 0.25 * (1 - t);
          root.rotation.x = tiltX * walk;

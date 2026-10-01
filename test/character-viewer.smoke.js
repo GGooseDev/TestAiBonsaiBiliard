@@ -177,6 +177,7 @@
   }
   assert(char.mode === "walk", "mode stays walk");
   assert(maxLift > 3, "walk lifts sneakers (max=" + maxLift.toFixed(2) + ")");
+  assert(char.group.position.y > 3, "character floats above rest origin (y=" + char.group.position.y.toFixed(1) + ")");
 
   /* back to ball */
   char.setMode("idle");
