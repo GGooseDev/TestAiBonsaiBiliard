@@ -47,9 +47,13 @@
     walkBtn.className = "viewer-btn";
     walkBtn.textContent = "WALK";
     walkBtn.addEventListener("click", function () {
-      if (!charRef) return;
+      if (!charRef) {
+        if (console && console.error) console.error("[viewer] character not built; buttons disabled");
+        return;
+      }
       charRef.setMode(charRef.mode === "walk" ? "idle" : "walk");
       walkBtn.textContent = charRef.mode === "walk" ? "IDLE" : "WALK";
+      walkBtn.classList.toggle("active", charRef.mode === "walk");
     });
 
     morphBtn = W.document.createElement("button");
@@ -179,7 +183,10 @@
 
   function onPointerDown(e) {
     if (!openFlag) return;
-    canvasEl.setPointerCapture(e.pointerId);
+    /* gestures starting on UI must not become camera drags (and no capture,
+       which would retarget pointerup/click away from the button) */
+    var t = e.target;
+    if (t && typeof t.closest === "function" && t.closest(".viewer-ui")) return;
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     if (Object.keys(pointers).length === 1) {
       dragging = true;
@@ -257,6 +264,7 @@
       }
       morphBtn.textContent = "BALL";
       walkBtn.textContent = "WALK";
+      walkBtn.classList.remove("active");   /* opens on idle */
       W.addEventListener("pointerdown", onPointerDown);
       W.addEventListener("pointermove", onPointerMove);
       W.addEventListener("pointerup", onPointerUp);

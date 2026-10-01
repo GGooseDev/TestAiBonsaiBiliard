@@ -32,14 +32,22 @@
 
   var EYE_X = 15, EYE_Y = 9;      /* eye centres on the face (+Z)               */
   var EYE_R = 10.5, IRIS_R = 5.2, HL_R = 1.7;
-  var SNK_L = 23, SNK_W = 12.5, SOLE_H = 5, UPPER_H = 9;
-  var LACE_LEN = 6.5, LACE_R = 0.8;
-  var FOOT_X = 17, FOOT_Z = 7;    /* feet sit slightly forward of the bottom    */
+  var SOLE_LEN = 24, SOLE_W = 13, SOLE_T = 7;   /* sole slab: len x wide x thick */
+  var UPPER_L = 19, UPPER_W = 11, UPPER_H = 9.5; /* puffy red upper ellipsoid    */
+  var LACE_R = 1.25;                           /* chunky white laces             */
+  var FOOT_X = 17, FOOT_Z = 8;    /* feet sit slightly forward of the bottom    */
   var SPLAY = 0.22;               /* toe splay angle, rad                        */
-  var SNK_LIFT = 9;               /* max step lift                               */
-  var FOOT_BASE_Y = -BODY_R + SOLE_H / 2; /* sole bottom rests on sphere bottom */
-  var HAND_X = 34, HAND_Y = 9;
-  var FINGER_LEN = 9, FINGER_R = 3.4;
+  var SNK_LIFT = 10;              /* max step lift                               */
+  var STRIDE_Z = 4;               /* fore/aft foot swing per step                */
+  var FOOT_BASE_Y = -BODY_R;      /* sole bottom at ball bottom                  */
+  var ARM_AMPL = 0.65;            /* arm-swing amplitude, rad                    */
+  var BOB_IDLE = 1.8;             /* idle vertical bob                           */
+  var BOB_WALK = 7;               /* walk vertical bob (highest mid-stride)      */
+  var HAND_X = 34, HAND_Y = 3;
+  var FIST_R = 9;                 /* rounded fist sphere                          */
+  var FINGER_CAP_LEN = 6, FINGER_R = 3.2;  /* capsule fingers                    */
+  var THUMB_CAP_LEN = 6, THUMB_R = 3;       /* capsule thumb                      */
+  var HAND_TILT_X = 0.15;         /* hands hang slightly forward                 */
   var BADGE_R = 13;
 
   var UPZ = new THREE.Vector3(0, 0, 1);
@@ -140,62 +148,85 @@
         pupils.push(iris);
       }
 
-      /* sneakers (no legs): red upper + white sole, toe splay, laces as X'd bars */
-      var footGroups = [];
-      for (var fs = -1; fs <= 1; fs += 2) {
-        var fg = new THREE.Group();
-        var sole = new THREE.Mesh(new THREE.BoxGeometry(SNK_L, SOLE_H, SNK_W), soleMat);
-        sole.castShadow = true; sole.receiveShadow = true;
-        var toeCap = new THREE.Mesh(new THREE.BoxGeometry(7, SOLE_H + 1.4, SNK_W - 2), soleMat);
-        toeCap.position.z = SNK_L * 0.35;
-        toeCap.castShadow = true;
-        var upper = new THREE.Mesh(new THREE.BoxGeometry(SNK_L - 3, UPPER_H, SNK_W - 2), upperMat);
-        upper.position.y = (SOLE_H + UPPER_H) / 2;
-        upper.castShadow = true; upper.receiveShadow = true;
-        for (var li = 0; li < 4; li++) {
-          var lace = new THREE.Mesh(new THREE.CylinderGeometry(LACE_R, LACE_R, LACE_LEN, 8), laceMat);
-          lace.position.set(0, SOLE_H + UPPER_H * 0.15 + li * (UPPER_H * 0.2), SNK_W * 0.42);
-          lace.rotation.z = (li % 2 ? -0.5 : 0.5);
-          fg.add(lace);
-        }
-        fg.add(sole, toeCap, upper);
-        fg.position.set(fs * FOOT_X, FOOT_BASE_Y, FOOT_Z);
-        /* toes point outward: +Y rotation turns +Z toward +X */
-        fg.rotation.y = fs * SPLAY;
-        root.add(fg);
-        footGroups.push(fg);
-      }
+       /* sneakers: rounded sole slab, puffy red upper, white toe cap, chunky laces */
+       var footGroups = [];
+       for (var fs = -1; fs <= 1; fs += 2) {
+         var fg = new THREE.Group();
+         /* sole: squashed sphere = rounded slab; group origin at its bottom */
+         var sole = new THREE.Mesh(
+           new THREE.SphereGeometry(1, 32, 24), soleMat);
+         sole.scale.set(SOLE_W / 2, SOLE_T / 2, SOLE_LEN / 2);
+         sole.position.y = SOLE_T / 2;
+         sole.castShadow = true; sole.receiveShadow = true;
+         fg.add(sole);
 
-      /* gloves (white, with fingers): fist sphere + 4 fanned fingers + thumb inward */
-      var handGroups = [];
-      for (var hs = -1; hs <= 1; hs += 2) {
-        var hg = new THREE.Group();
-        var fist = new THREE.Mesh(new THREE.SphereGeometry(9, 18, 14), gloveMat);
-        fist.scale.set(1.15, 1.05, 0.85);
-        fist.position.y = 2;
-        fist.castShadow = true; fist.receiveShadow = true;
-        hg.add(fist);
-        for (var fi = 0; fi < 4; fi++) {
-          var finger = new THREE.Mesh(new THREE.CylinderGeometry(FINGER_R * 0.7, FINGER_R, FINGER_LEN, 10), gloveMat);
-          finger.position.set((fi - 1.5) * 2.6, 9.5 + (fi - 1.5) * 0.3, 0);
-          finger.rotation.y = (fi - 1.5) * 0.12;
-          finger.rotation.x = -0.18;
-          finger.castShadow = true;
-          hg.add(finger);
-        }
-        var thumb = new THREE.Mesh(new THREE.CylinderGeometry(3, 2.5, 8, 8), gloveMat);
-        /* inward (toward the body centre) at mid-fist height */
-        thumb.position.set(-hs * 8, -4, 0);
-        thumb.rotation.z = hs * Math.PI / 2;
-        thumb.castShadow = true;
-        hg.add(thumb);
+         /* puffy red upper sitting on the sole */
+         var upper = new THREE.Mesh(
+           new THREE.SphereGeometry(1, 32, 24), upperMat);
+         upper.scale.set(UPPER_W / 2, UPPER_H / 2, UPPER_L / 2);
+         upper.position.y = SOLE_T + (UPPER_H / 2) - 2; /* sink into the sole */
+         upper.castShadow = true; upper.receiveShadow = true;
+         fg.add(upper);
 
-        var hx = hs * HAND_X, hy = HAND_Y;
-        var hz = Math.sqrt(BODY_R * BODY_R - hx * hx - hy * hy) + 0.8;
-        hg.position.set(hx, hy, hz);
-        root.add(hg);
-        handGroups.push(hg);
-      }
+         /* white rounded toe cap at the front of the upper */
+         var toeCap = new THREE.Mesh(
+           new THREE.SphereGeometry(1, 24, 16), soleMat);
+         toeCap.scale.set(5, 3.8, 5.4);
+         toeCap.position.set(0, SOLE_T + UPPER_H * 0.28, UPPER_L * 0.42);
+         toeCap.castShadow = true;
+         fg.add(toeCap);
+
+         /* chunky laces: bars across the width, stacked up the instep */
+         for (var li = 0; li < 4; li++) {
+           var lace = new THREE.Mesh(
+             new THREE.CylinderGeometry(LACE_R, LACE_R, UPPER_W + 1.5, 12), laceMat);
+           lace.rotation.z = Math.PI / 2; /* lay along X (across the foot) */
+           lace.position.set(0, SOLE_T + UPPER_H * 0.86, -UPPER_L * 0.2 + li * (UPPER_L * 0.11));
+           fg.add(lace);
+         }
+
+         fg.position.set(fs * FOOT_X, FOOT_BASE_Y, FOOT_Z);
+         /* toes point outward: +Y rotation turns +Z toward +X */
+         fg.rotation.y = fs * SPLAY;
+         root.add(fg);
+         footGroups.push(fg);
+       }
+
+       /* gloves (rounded mitts): fist sphere + capsule fingers hanging down, thumb inward */
+       var handGroups = [];
+       for (var hs = -1; hs <= 1; hs += 2) {
+         var hg = new THREE.Group();
+         /* rounded fist */
+         var fist = new THREE.Mesh(new THREE.SphereGeometry(FIST_R, 24, 18), gloveMat);
+         fist.scale.set(1.05, 1.0, 0.9);
+         fist.castShadow = true; fist.receiveShadow = true;
+         hg.add(fist);
+         /* fingers: rounded capsules fanned below the fist */
+         for (var fi = 0; fi < 4; fi++) {
+           var finger = new THREE.Mesh(
+             new THREE.CapsuleGeometry(FINGER_R, FINGER_CAP_LEN, 6, 8), gloveMat);
+           finger.position.set((fi - 1.5) * 3.0, -(FIST_R - 3.5), 0);
+           finger.rotation.z = -(fi - 1.5) * 0.1;
+           finger.castShadow = true;
+           hg.add(finger);
+         }
+         /* thumb: capsule pointing inward toward the body centre */
+         var thumb = new THREE.Mesh(
+           new THREE.CapsuleGeometry(THUMB_R, THUMB_CAP_LEN, 6, 8), gloveMat);
+         thumb.position.set(-hs * (FIST_R + THUMB_R - 1.5), -1.5, 0);
+         thumb.rotation.z = hs * Math.PI / 2;
+         thumb.castShadow = true;
+         hg.add(thumb);
+
+         var hx = hs * HAND_X, hy = HAND_Y;
+         var hz = Math.sqrt(BODY_R * BODY_R - hx * hx - hy * hy) + 1;
+         hg.position.set(hx, hy, hz);
+         /* hang slightly forward and out */
+         hg.rotation.x = HAND_TILT_X;
+         hg.rotation.y = hs * 0.1;
+         root.add(hg);
+         handGroups.push(hg);
+       }
 
       /* initial accessory state: pure ball */
       eyeGroups[0].visible = false; eyeGroups[1].visible = false;
@@ -228,52 +259,53 @@
           blink = 1 - 0.94 * Math.sin((bp / BLINK_DUR) * Math.PI);
         }
 
-        /* walk cycle values */
-        var phase = T * WALK_RAD;
-        var sSin = Math.sin(phase);
-        var liftRt = Math.pow(Math.max(0, sSin), 2) * SNK_LIFT;    /* char right (x<0) */
-        var liftLt = Math.pow(Math.max(0, -sSin), 2) * SNK_LIFT;   /* char left  (x>0)  */
+         /* walk cycle values (group 0 = x<0 lifts when sin > 0) */
+         var phase = T * WALK_RAD;
+         var sSin = Math.sin(phase);
+         var liftRt = Math.pow(Math.max(0, sSin), 2) * SNK_LIFT;    /* group 0 (x<0) */
+         var liftLt = Math.pow(Math.max(0, -sSin), 2) * SNK_LIFT;   /* group 1 (x>0)  */
 
-        /* pose: mix(idleValue, walkValue, walkBlend) */
-        var breath = Math.sin(T * 2.3);
-        var bobY = mix(Math.sin(T * 2.3), -Math.abs(sSin) * 5, walk);
-        var tiltX = sSin * 0.04;
-        var swayRy = Math.sin(T * 0.8) * 0.045;
-        var armRt = mix(Math.sin(T * 1.7), -sSin * 0.45, walk);
-        var armLt = mix(Math.sin(T * 1.7 + Math.PI / 2), sSin * 0.45, walk);
+         /* pose: mix(idleValue, walkValue, walkBlend) */
+         var breath = Math.sin(T * 2.3);
+         var bobY = mix(breath * BOB_IDLE, (1 - Math.abs(sSin)) * BOB_WALK, walk);
+         var tiltX = sSin * 0.05;
+         var swayRy = Math.sin(T * 0.8) * 0.1;
+         var strideZ = sSin * STRIDE_Z;
 
-        /* body: mid-morph squash + breathing */
-        var squish = Math.sin(Math.PI * t);
-        bodyMesh.scale.set(1 + 0.14 * squish, (1 - 0.18 * squish) * (1 + 0.025 * breath), 1 + 0.14 * squish);
-        /* wobble only while morphing (amplitude dies at t=0 and t=1) */
-        root.rotation.y = swayRy * (1 - walk) + Math.sin(t * 6) * 0.25 * (1 - t);
-        root.rotation.x = tiltX * walk;
+         /* body: mid-morph squash + breathing + vertical bob */
+         var squish = Math.sin(Math.PI * t);
+         bodyMesh.scale.set(1 + 0.14 * squish, (1 - 0.18 * squish) * (1 + 0.025 * breath), 1 + 0.14 * squish);
+         root.position.y = bobY;
+         /* wobble only while morphing (amplitude dies at t=0 and t=1) */
+         root.rotation.y = swayRy * (1 - walk) + Math.sin(t * 6) * 0.25 * (1 - t);
+         root.rotation.x = tiltX * walk;
 
-        /* eyes: morph scale + blink squash; pupils drift forward while walking */
-        for (var ei = 0; ei < 2; ei++) {
-          eyeGroups[ei].scale.set(mEye, mEye * blink, mEye);
-          eyeGroups[ei].visible = mEye > 0.01;
-          pupils[ei].position.set(0, 1.8, 0.05 + walk * 1.4);
-        }
+         /* eyes: morph scale + blink squash; pupils drift around (idle) / forward (walk) */
+         var lookX = mix(Math.sin(T * 0.53) * 2.0 + Math.sin(T * 0.81) * 1.0, sSin * 2.6, walk);
+         for (var ei = 0; ei < 2; ei++) {
+           eyeGroups[ei].scale.set(mEye, mEye * blink, mEye);
+           eyeGroups[ei].visible = mEye > 0.01;
+           pupils[ei].position.set(lookX, 1.8, 0.05 + walk * 1.4);
+         }
 
-        /* gloves: morph scale + swing/lean */
-        handGroups[0].rotation.y = armLt;       /* x<0 side */
-        handGroups[0].rotation.x = -0.12 * walk;
-        handGroups[1].rotation.y = armRt;       /* x>0 side */
-        handGroups[1].rotation.x = -0.12 * walk;
-        for (var hi = 0; hi < 2; hi++) {
-          handGroups[hi].scale.set(mGlove, mGlove, mGlove);
-          handGroups[hi].visible = mGlove > 0.01;
-        }
+         /* gloves: morph scale + arm swing (opposite phase to the same-side foot) */
+         for (var hi = 0; hi < 2; hi++) {
+           var idleLean = Math.sin(T * 1.7 + (hi === 0 ? 0 : Math.PI / 2)) * 0.08;
+           var swing = (hi === 0 ? -sSin : sSin) * ARM_AMPL;
+           handGroups[hi].rotation.x = mix(idleLean, swing, walk) + HAND_TILT_X;
+           handGroups[hi].scale.set(mGlove, mGlove, mGlove);
+           handGroups[hi].visible = mGlove > 0.01;
+         }
 
-        /* sneakers: morph scale + step lift (or idle micro-bob) */
-        var lifts = [liftRt, liftLt];
-        for (var fi2 = 0; fi2 < 2; fi2++) {
-          var footY = FOOT_BASE_Y + mix(Math.sin(T * 2.3) * 0.8, lifts[fi2], walk);
-          footGroups[fi2].position.y = footY;
-          footGroups[fi2].scale.set(mSnk, mSnk, mSnk);
-          footGroups[fi2].visible = mSnk > 0.01;
-        }
+         /* sneakers: morph scale + step lift + fore/aft stride + toe-up when airborne */
+         var lifts = [liftRt, liftLt];
+         for (var fi2 = 0; fi2 < 2; fi2++) {
+           footGroups[fi2].position.y = FOOT_BASE_Y + mix(Math.sin(T * 2.3) * 0.8, lifts[fi2], walk);
+           footGroups[fi2].position.z = FOOT_Z + (fi2 === 0 ? strideZ : -strideZ) * walk;
+           footGroups[fi2].rotation.x = -(lifts[fi2] / SNK_LIFT) * 0.45 * walk;
+           footGroups[fi2].scale.set(mSnk, mSnk, mSnk);
+           footGroups[fi2].visible = mSnk > 0.01;
+         }
 
         state.morphT = t;
       }

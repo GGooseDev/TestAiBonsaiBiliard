@@ -110,7 +110,12 @@
     .viewer-btn:hover { transform: translateY(-2px); border-color: #ffd166;
                         box-shadow: 0 6px 24px rgba(0, 0, 0, .5), 0 0 24px rgba(255, 209, 102, .35),
                                inset 0 1px 0 rgba(255, 255, 255, .15); }
-    .viewer-btn:active { transform: translateY(0); }
+     .viewer-btn:active { transform: translateY(0); }
+     /* highlighted state = mode currently selected (WALK/IDLE) */
+     .viewer-btn.active { border-color: #ffd166; background: rgba(255, 209, 102, .18);
+                          box-shadow: 0 6px 24px rgba(0, 0, 0, .5),
+                                      0 0 24px rgba(255, 209, 102, .35),
+                                      inset 0 1px 0 rgba(255, 255, 255, .15); }
     .viewer-hint { font-family: Arial, Helvetica, sans-serif; font-size: clamp(9px, 1.1vw, 12px);
                    letter-spacing: .3em; text-transform: uppercase; color: rgba(255, 222, 190, .55); }
 
@@ -165,8 +170,8 @@
   <script src="src/noise.js?v=20260929e"></script>
         <script src="src/webgl3d.js?v=20260930l"></script>
        <script src="src/sound.js"></script>
-     <script src="src/character.js?v=20261001a"></script>
-     <script src="src/viewer.js?v=20261001a"></script>
+      <script src="src/character.js?v=20261001b"></script>
+      <script src="src/viewer.js?v=20261001c"></script>
      <script src="src/menu.js?v=20260930q"></script>
     <script src="src/game.js?v=20260930j"></script>
 <script src="src/main.js?v=20260930m"></script>

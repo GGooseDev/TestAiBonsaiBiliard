@@ -62,7 +62,7 @@
 
   var THREE = {
     Vector3: V3, Quaternion: Quaternion, Group: Group, Mesh: Mesh, Scene: Scene,
-    SphereGeometry: GeoStub, BoxGeometry: GeoStub, CylinderGeometry: GeoStub, CircleGeometry: GeoStub, PlaneGeometry: GeoStub, GridHelper: GeoStub,
+    SphereGeometry: GeoStub, BoxGeometry: GeoStub, CylinderGeometry: GeoStub, CapsuleGeometry: GeoStub, CircleGeometry: GeoStub, PlaneGeometry: GeoStub, GridHelper: GeoStub,
     MeshStandardMaterial: MatStub, MeshBasicMaterial: MatStub, ShaderMaterial: MatStub, CanvasTexture: TexStub, Color: function () {},
     PerspectiveCamera: Cam, HemisphereLight: LightBase, DirectionalLight: LightBase, WebGLRenderer: Renderer, PCFSoftShadowMap: 4
   };
@@ -78,7 +78,6 @@
                    remove: function (c) { this.className = (this.className + " " + c).replace(" " + c, "").trim(); } },
       appendChild: function (c) { el.children.push(c); return c; },
       remove: function () {},
-      setPointerCapture: function () {},
       addEventListener: function () {}, removeEventListener: function () {}
     };
     if (tag === "canvas") {
@@ -172,7 +171,7 @@
   for (var i = 0; i < 240; i++) {
     char.update(1 / 60);
     for (var fi = 5; fi <= 6; fi++) {
-      var y = top()[fi].position.y - (-47.5); /* FOOT_BASE_Y */
+      var y = top()[fi].position.y - (-50);  /* FOOT_BASE_Y: sole bottom at ball bottom */
       if (y > maxLift) maxLift = y;
     }
   }
